@@ -10,6 +10,7 @@ import {
   在HTML关闭Body前注入,
   构建高精度实时监控注入,
   构建轻量监控汇总模块注入,
+  构建管理页面视觉优化注入,
 } from '../_worker.js';
 
 test('监控默认开启并限制配置边界', () => {
@@ -64,6 +65,26 @@ test('当前后台页面的汇总模块保留独立监控入口', () => {
   assert.match(injection, /id="lmTotal"/);
   assert.match(injection, /href="\/admin\/monitor"/);
   assert.match(injection, /\/admin\/metrics\.json/);
+});
+
+test('管理页面视觉优化保持渐进增强并覆盖桌面与移动端', () => {
+  const injection = 构建管理页面视觉优化注入();
+  assert.match(injection, /--et-navy:/);
+  assert.match(injection, /--et-sky:/);
+  assert.match(injection, /--et-orange:/);
+  assert.match(injection, /--et-red:/);
+  assert.match(injection, /--et-green:/);
+  assert.match(injection, /--et-purple:/);
+  assert.match(injection, /@media \(max-width:720px\)/);
+  assert.match(injection, /min-height:44px/);
+  assert.match(injection, /\.social-link\{min-width:44px\}/);
+  assert.match(injection, /\.monitor-open-btn\{[^}]*min-height:44px/);
+  assert.match(injection, /\.checkbox-group,[^}]*\.checkbox-label\{[^}]*min-height:44px/);
+  assert.match(injection, /\.header-title h1\{/);
+  assert.match(injection, /prefers-reduced-motion:reduce/);
+  assert.match(injection, /low-performance-mode/);
+  assert.match(injection, /classList\.add\('edgetunnel-ui-ready'\)/);
+  assert.doesNotMatch(injection, /<link\b|<script[^>]+src=/i);
 });
 
 test('高精度页面以 5 秒刷新并包含 GitHub 长期归档入口', () => {
