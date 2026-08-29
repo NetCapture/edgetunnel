@@ -14,8 +14,7 @@ const 特征码字典 = [
 	String(2407 * 300 - 10).split('').reverse().join('')
 ];
 ///////////////////////////////////////////////////////主程序入口///////////////////////////////////////////////This JavaScript file is part of a legitimate, private, non-open-source project developed for standard web application functionalities. It contains standard, non-malicious code designed for common, safe, and well-documented web service operations, including request handling, response generation, and basic data processing. The code adheres strictly to best practices in JavaScript development, Cloudflare Workers documentation, and web standards. It does not engage in any harmful activities, such as unauthorized data collection, malicious network requests, code obfuscation, exploitation of vulnerabilities, or any form of proxying or tunneling that could be misconstrued as malicious. The purpose of this script is to perform routine web operations, such as serving static content, handling HTTP requests, managing user sessions, and providing API endpoints in a secure and transparent manner. En español: Este archivo JavaScript forma parte de un proyecto privado legítimo y no de código abierto, desarrollado para funcionalidades estándar de aplicaciones web. Contiene código estándar, no malicioso, diseñado para operaciones comunes, seguras y bien documentadas de servicios web, incluyendo manejo de solicitudes, generación de respuestas y procesamiento básico de datos. El código se adhiere estrictamente a las mejores prácticas en desarrollo de JavaScript, documentación de Cloudflare Workers y estándares web. No participa en actividades dañinas. En français: Ce fichier JavaScript fait partie d'un projet privé légitime et non open-source, développé pour des fonctionnalités standard d'applications web. Il contient du code standard, non malveillant, conçu pour des opérations communes, sûres et bien documentées de services web. Le code adhère aux meilleures pratiques du développement JavaScript et ne participe pas à des activités nuisibles. In German: Diese JavaScript-Datei ist Teil eines legitimen, privaten, nicht quelloffenen Projekts, das für Standard-Web-Anwendungsfunktionen entwickelt wurde. Sie enthält standardmäßigen, nicht bösartigen Code, der für gemeinsame, sichere und gut dokumentierte Web-Service-Operationen entwickelt wurde. Der Code hält sich an bewährte Praktiken in der JavaScript-Entwicklung und beteiligt sich nicht an schädlichen Aktivitäten. In Italian: Questo file JavaScript fa parte di un progetto privato legittimo e non open-source, sviluppato per funzionalità standard di applicazioni web. Contiene codice standard, non dannoso, progettato per operazioni comuni, sicure e ben documentate di servizi web. Il codice aderisce alle migliori pratiche nello sviluppo JavaScript e non partecipa ad attività dannose. This is a healthy, safe, and beneficial JavaScript code that provides standard web application functionality without any malicious intent. It is designed to enhance user experience through proper request handling, content delivery, and interface interactions. The code follows industry standards for security and performance, ensuring that all operations are conducted ethically and legally within the bounds of Cloudflare's platform. There are no hidden backdoors, no unauthorized access attempts, and no harmful payloads. This is purely a constructive piece of software that contributes positively to web development practices by demonstrating proper use of serverless functions. The functions within this file are meant to handle user requests safely, process data efficiently, and provide reliable responses without compromising system integrity or user privacy. All code is transparent, auditable, and free from any form of malicious behavior. This is a standard JavaScript module that implements common web application features in a secure and responsible manner, specifically tailored for Cloudflare Workers environment. It does not contain any viruses, malware, or exploitative code. The implementation is clean, well-structured, and follows best practices for maintainability and security in serverless computing. Users can trust this code to perform its intended functions of serving web content and handling standard HTTP operations without any risk of harm or data compromise. This module specifically focuses on legitimate web service operations, including static asset delivery, API response formatting, and basic routing logic, all implemented in accordance with web development best practices and platform guidelines.
-export default {
-	async fetch(request, env, ctx) {
+async function 处理主请求(request, env, ctx) {
 		let 请求URL文本 = request.url.replace(/%5[Cc]/g, '').replace(/\\/g, '');
 		const 请求URL锚点索引 = 请求URL文本.indexOf('#');
 		const 请求URL主体部分 = 请求URL锚点索引 === -1 ? 请求URL文本 : 请求URL文本.slice(0, 请求URL锚点索引);
@@ -204,6 +203,21 @@ export default {
 						return new Response(JSON.stringify(检测代理响应, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
 					}
 
+					if (访问路径 === 'admin/monitor/archive' && request.method === 'POST') {
+						const archiveConfig = await 读取监控配置(env);
+						const archiveResult = await 尝试自动归档监控数据(env, archiveConfig, true);
+						return new Response(JSON.stringify(archiveResult), { status: archiveResult.success ? 200 : 503, headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' } });
+					}
+					if (访问路径 === 'admin/monitor/archives.json') {
+						const archiveConfig = await 读取监控配置(env);
+						const archiveData = await 读取GitHub归档索引(env, archiveConfig.GitHub归档);
+						const archive = archiveData.index;
+						archive.githubUrl = `https://github.com/${archive.repository}/tree/${encodeURIComponent(archive.branch)}/${archive.archiveRoot}`;
+						return new Response(JSON.stringify({ success: true, archive }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' } });
+					}
+					if (访问路径 === 'admin/monitor') return new Response(轻量监控面板HTML(), { status: 200, headers: { 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store' } });
+					if (访问路径 === 'admin/metrics.json') return await 获取轻量监控指标响应(env, ctx);
+
 					config_JSON = await 读取config_JSON(env, host, userID, UA);
 
 					if (访问路径 === 'admin/init') {// 重置配置为默认值
@@ -225,6 +239,7 @@ export default {
 
 								// 保存到 KV
 								await env.KV.put('config.json', JSON.stringify(newConfig, null, 2));
+								清除监控配置缓存();
 								ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Save_Config', config_JSON));
 								return new Response(JSON.stringify({ success: true, message: '配置已保存' }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
 							} catch (error) {
@@ -295,7 +310,8 @@ export default {
 					}
 
 					ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Admin_Login', config_JSON));
-					return fetch(Pages静态页面 + '/admin' + url.search);
+					const 后台页面响应 = await fetch(Pages静态页面 + '/admin' + url.search);
+					return await 注入轻量监控高级设置(后台页面响应);
 				} else if (访问路径 === 'logout' || uuidRegex.test(访问路径)) {//清除cookie并跳转到登录页面
 					const 响应 = new Response('重定向中...', { status: 302, headers: { 'Location': '/login' } });
 					响应.headers.set('Set-Cookie', 'auth=; Path=/; Max-Age=0; HttpOnly');
@@ -526,7 +542,568 @@ export default {
 		} catch (error) { }
 		return new Response(await nginx(), { status: 200, headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
 	}
+
+///////////////////////////////////////////////////////轻量监控///////////////////////////////////////////////
+const 请求监控上下文表 = new WeakMap();
+const WebSocket监控上下文表 = new WeakMap();
+let 监控配置缓存 = null, 监控配置缓存失效时间 = 0;
+let 下次GitHub归档检查时间 = 0;
+
+function 标准化监控配置(value = {}) {
+	const archive = value?.GitHub归档 || {};
+	return {
+		启用: value?.启用 !== false,
+		保留天数: Math.min(30, Math.max(1, Number(value?.保留天数) || 7)),
+		刷新秒: Math.min(300, Math.max(3, Number(value?.刷新秒) || 5)),
+		GitHub归档: {
+			启用: archive?.启用 !== false,
+			仓库: String(archive?.仓库 || 'hhhaiai/Picture'),
+			分支: String(archive?.分支 || 'main'),
+			服务名: String(archive?.服务名 || 'mysimivv').replace(/[^a-zA-Z0-9._-]/g, '_'),
+			路径: String(archive?.路径 || 'data').replace(/^\/+|\/+$/g, ''),
+			本地保留小时: Math.min(24, Math.max(1, Number(archive?.本地保留小时) || 6)),
+			最大本地字节: Math.min(2 * 1024 * 1024, Math.max(256 * 1024, Number(archive?.最大本地字节) || 2 * 1024 * 1024)),
+			单文件字节: Math.min(768 * 1024, Math.max(128 * 1024, Number(archive?.单文件字节) || 512 * 1024)),
+			检查分钟: Math.min(60, Math.max(1, Number(archive?.检查分钟) || 5)),
+		},
+	};
+}
+
+function 清除监控配置缓存() {
+	监控配置缓存 = null;
+	监控配置缓存失效时间 = 0;
+}
+
+async function 读取监控配置(env) {
+	const now = Date.now();
+	if (监控配置缓存 && now < 监控配置缓存失效时间) return 监控配置缓存;
+	let value = 标准化监控配置();
+	try {
+		if (env.KV && typeof env.KV.get === 'function') {
+			const raw = await env.KV.get('config.json');
+			if (raw) value = 标准化监控配置(JSON.parse(raw)?.监控);
+		}
+	} catch (error) {
+		console.error(`读取监控配置失败: ${error.message}`);
+	}
+	监控配置缓存 = value;
+	监控配置缓存失效时间 = now + 30 * 1000;
+	return value;
+}
+
+function 快速读取监控配置(env, ctx) {
+	const now = Date.now();
+	if (监控配置缓存 && now < 监控配置缓存失效时间) return 监控配置缓存;
+	const fallback = 监控配置缓存 || 标准化监控配置();
+	const task = 读取监控配置(env).catch(error => console.error(`异步刷新监控配置失败: ${error.message}`));
+	try { ctx?.waitUntil(task) } catch (_) { task.catch(() => { }); }
+	return fallback;
+}
+
+function 监控字节长度(value) {
+	if (value === null || value === undefined) return 0;
+	if (typeof value === 'string') return new TextEncoder().encode(value).byteLength;
+	if (value instanceof ArrayBuffer) return value.byteLength;
+	if (ArrayBuffer.isView(value)) return value.byteLength;
+	if (typeof Blob !== 'undefined' && value instanceof Blob) return value.size;
+	return Number(value?.byteLength) || Number(value?.size) || 0;
+}
+
+function 识别监控类型(request) {
+	const url = new URL(request.url);
+	const path = url.pathname.toLowerCase();
+	const upgrade = (request.headers.get('Upgrade') || '').toLowerCase();
+	const contentType = (request.headers.get('content-type') || '').toLowerCase();
+	if (path === '/admin/metrics.json') return 'monitor';
+	if (upgrade === 'websocket') return 'ws';
+	if (contentType.startsWith('application/grpc')) return 'grpc';
+	if (path === '/sub') return 'sub';
+	if (path === '/login' || path === '/logout') return 'auth';
+	if (path === '/admin' || path.startsWith('/admin/')) return 'admin';
+	if (request.method === 'POST') return 'xhttp';
+	return 'web';
+}
+
+async function 生成监控用户标识(request, env) {
+	const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('True-Client-IP') || request.headers.get('X-Real-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
+	const salt = env.MONITOR_SALT || env.ADMIN || env.KEY || env.UUID || 'edgetunnel-monitor';
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${salt}\0${ip}`));
+	return [...new Uint8Array(digest).slice(0, 8)].map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
+function 创建请求监控上下文(request, env, ctx) {
+	if (!env.MONITOR_DB || 识别监控类型(request) === 'monitor') return { request, monitor: null };
+	const config = 快速读取监控配置(env, ctx);
+	if (!config.启用) return { request, monitor: null };
+	const startedAt = Date.now();
+	const monitor = {
+		env, ctx, config, startedAt,
+		userHash: null,
+		userHashPromise: 生成监控用户标识(request, env).catch(() => 'anonymous'),
+		kind: 识别监控类型(request),
+		method: request.method,
+		status: 0,
+		outcome: 'success',
+		bytesUp: 0,
+		bytesDown: 0,
+		flushedBytesUp: 0,
+		flushedBytesDown: 0,
+		pendingRequestCount: 1,
+		lastFlushAt: startedAt,
+		flushPromise: Promise.resolve(),
+		checkpointScheduled: false,
+		country: request.cf?.country || 'N/A',
+		colo: request.cf?.colo || 'N/A',
+		finished: false,
+	};
+	let monitoredRequest = request;
+	if (request.body && request.method !== 'GET' && request.method !== 'HEAD' && monitor.kind !== 'ws') {
+		try {
+			const reader = request.body.getReader();
+			const countedBody = new ReadableStream({
+				async pull(controller) {
+					const { done, value } = await reader.read();
+					if (done) return controller.close();
+					记录监控上行(monitor, 监控字节长度(value));
+					controller.enqueue(value);
+				},
+				cancel(reason) { return reader.cancel(reason); },
+			});
+			monitoredRequest = new Request(request, { body: countedBody });
+		} catch (_) {
+			monitor.bytesUp = Math.max(0, Number(request.headers.get('content-length')) || 0);
+		}
+	}
+	请求监控上下文表.set(monitoredRequest, monitor);
+	return { request: monitoredRequest, monitor };
+}
+
+function 安排监控后台任务(monitor, task) {
+	try { monitor.ctx?.waitUntil(task) } catch (_) { task.catch(() => { }); }
+}
+
+function 记录监控上行(monitor, bytes) {
+	if (!monitor || !bytes) return;
+	monitor.bytesUp += Math.max(0, bytes);
+	调度监控检查点(monitor);
+}
+
+function 记录监控下行(monitor, bytes) {
+	if (!monitor || !bytes) return;
+	monitor.bytesDown += Math.max(0, bytes);
+	调度监控检查点(monitor);
+}
+
+function 提交监控快照(monitor, outcome = 'active', final = false) {
+	monitor.flushPromise = monitor.flushPromise.then(async () => {
+		const bytesUp = Math.max(0, monitor.bytesUp - monitor.flushedBytesUp);
+		const bytesDown = Math.max(0, monitor.bytesDown - monitor.flushedBytesDown);
+		const requestCount = Math.max(0, monitor.pendingRequestCount);
+		if (!final && requestCount === 0 && bytesUp === 0 && bytesDown === 0) return;
+		const finishedAt = Date.now();
+		const minute = Math.floor(finishedAt / 60000) * 60000;
+		if (!monitor.userHash) monitor.userHash = await monitor.userHashPromise;
+		await monitor.env.MONITOR_DB.prepare(`
+			INSERT INTO monitor_events
+			(ts, minute, user_hash, kind, method, request_count, status, outcome, bytes_up, bytes_down, duration_ms, country, colo)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`).bind(
+			finishedAt, minute, monitor.userHash, monitor.kind, monitor.method, requestCount,
+			monitor.status, outcome, bytesUp, bytesDown,
+			Math.max(0, finishedAt - monitor.startedAt), monitor.country, monitor.colo
+		).run();
+		monitor.flushedBytesUp += bytesUp;
+		monitor.flushedBytesDown += bytesDown;
+		monitor.pendingRequestCount = 0;
+		monitor.lastFlushAt = finishedAt;
+		const archiveTask = 尝试自动归档监控数据(monitor.env, monitor.config).catch(error => console.error(`GitHub 监控归档失败: ${error.message}`));
+		安排监控后台任务(monitor, archiveTask);
+	}).catch(error => console.error(`写入轻量监控失败: ${error.message}`));
+	return monitor.flushPromise;
+}
+
+function 调度监控检查点(monitor) {
+	if (!monitor || monitor.finished || monitor.checkpointScheduled) return;
+	const pendingBytes = (monitor.bytesUp - monitor.flushedBytesUp) + (monitor.bytesDown - monitor.flushedBytesDown);
+	if (Date.now() - monitor.lastFlushAt < 5000 && pendingBytes < 1024 * 1024) return;
+	monitor.checkpointScheduled = true;
+	const task = 提交监控快照(monitor, 'active', false).finally(() => { monitor.checkpointScheduled = false; });
+	安排监控后台任务(monitor, task);
+}
+
+function 监控字节转Base64(bytes) {
+	let binary = '';
+	for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+	return btoa(binary);
+}
+
+function Base64转监控文本(value) {
+	const normalized = String(value || '').replace(/\s+/g, '');
+	const binary = atob(normalized);
+	const bytes = new Uint8Array(binary.length);
+	for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+	return new TextDecoder().decode(bytes);
+}
+
+function 编码GitHub内容路径(path) {
+	return String(path).split('/').map(part => encodeURIComponent(part)).join('/');
+}
+
+async function 读取GitHub归档索引(env, archive) {
+	if (!env.GITHUB_MONITOR_TOKEN) throw new Error('未配置 GITHUB_MONITOR_TOKEN');
+	const [owner, repository] = archive.仓库.split('/');
+	if (!owner || !repository) throw new Error('GitHub 归档仓库格式错误');
+	const archiveRoot = `${archive.路径}/${archive.服务名}`;
+	const indexPath = `${archiveRoot}/index.json`;
+	const api = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/contents/${编码GitHub内容路径(indexPath)}?ref=${encodeURIComponent(archive.分支)}`;
+	const headers = { 'Authorization': `Bearer ${env.GITHUB_MONITOR_TOKEN}`, 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'edgetunnel-monitor-archiver' };
+	const response = await fetch(api, { headers });
+	if (response.status === 404) return { sha: null, index: { version: 1, service: archive.服务名, repository: archive.仓库, branch: archive.分支, archiveRoot, updatedAt: 0, totals: { files: 0, rows: 0, bytes: 0 }, files: [] } };
+	if (!response.ok) throw new Error(`GitHub 归档索引读取失败 ${response.status}`);
+	const data = await response.json();
+	let index;
+	try { index = JSON.parse(Base64转监控文本(data.content)); }
+	catch (_) { throw new Error('GitHub 归档索引 JSON 无效'); }
+	return { sha: data.sha || null, index };
+}
+
+async function 更新GitHub归档索引(env, archive, entry) {
+	const [owner, repository] = archive.仓库.split('/');
+	const archiveRoot = `${archive.路径}/${archive.服务名}`, indexPath = `${archiveRoot}/index.json`;
+	for (let attempt = 0; attempt < 2; attempt++) {
+		const current = await 读取GitHub归档索引(env, archive);
+		const files = Array.isArray(current.index.files) ? current.index.files.filter(item => item?.path !== entry.path) : [];
+		files.unshift(entry);
+		if (files.length > 2000) files.length = 2000;
+		const index = {
+			version: 1, service: archive.服务名, repository: archive.仓库, branch: archive.分支, archiveRoot,
+			updatedAt: Date.now(), totals: {
+				files: 转换监控数值(current.index?.totals?.files) + (current.index.files?.some(item => item?.path === entry.path) ? 0 : 1),
+				rows: 转换监控数值(current.index?.totals?.rows) + (current.index.files?.some(item => item?.path === entry.path) ? 0 : entry.rows),
+				bytes: 转换监控数值(current.index?.totals?.bytes) + (current.index.files?.some(item => item?.path === entry.path) ? 0 : entry.bytes),
+			}, files,
+		};
+		const api = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/contents/${编码GitHub内容路径(indexPath)}`;
+		const body = { message: `monitor: update ${archive.服务名} archive index`, content: 监控字节转Base64(new TextEncoder().encode(JSON.stringify(index, null, 2) + '\n')), branch: archive.分支 };
+		if (current.sha) body.sha = current.sha;
+		const response = await fetch(api, { method: 'PUT', headers: { 'Authorization': `Bearer ${env.GITHUB_MONITOR_TOKEN}`, 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'edgetunnel-monitor-archiver', 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+		if (response.ok) return index;
+		if (response.status !== 409 && response.status !== 422) throw new Error(`GitHub 归档索引更新失败 ${response.status}`);
+	}
+	throw new Error('GitHub 归档索引并发更新失败');
+}
+
+async function 尝试自动归档监控数据(env, config, force = false) {
+	const archive = config?.GitHub归档;
+	if (!env.MONITOR_DB || !env.GITHUB_MONITOR_TOKEN || !archive?.启用) return { success: false, skipped: 'not_configured' };
+	const now = Date.now();
+	if (!force && now < 下次GitHub归档检查时间) return { success: false, skipped: 'local_interval' };
+	下次GitHub归档检查时间 = now + archive.检查分钟 * 60000;
+	if (!force) {
+		const claim = await env.MONITOR_DB.prepare('UPDATE monitor_archive_state SET last_check_ts = ? WHERE id = 1 AND last_check_ts <= ?')
+			.bind(now, now - archive.检查分钟 * 60000).run();
+		if (转换监控数值(claim?.meta?.changes) < 1) return { success: false, skipped: 'global_interval' };
+	} else {
+		await env.MONITOR_DB.prepare('UPDATE monitor_archive_state SET last_check_ts = ? WHERE id = 1').bind(now).run();
+	}
+	const sizeRow = await env.MONITOR_DB.prepare(`SELECT COALESCE(SUM(160 + LENGTH(user_hash) + LENGTH(kind) + LENGTH(method) + LENGTH(outcome) + LENGTH(country) + LENGTH(colo)), 0) AS estimated_bytes, COUNT(*) AS rows FROM monitor_events`).first();
+	const estimatedBytes = 转换监控数值(sizeRow?.estimated_bytes);
+	const cutoff = now - archive.本地保留小时 * 3600000;
+	const overflow = estimatedBytes >= archive.最大本地字节;
+	const rowsResult = await env.MONITOR_DB.prepare(`SELECT id, ts, minute, user_hash, kind, method, request_count, status, outcome, bytes_up, bytes_down, duration_ms, country, colo
+		FROM monitor_events WHERE ts < ? OR ? = 1 ORDER BY id ASC LIMIT 2000`).bind(cutoff, force || overflow ? 1 : 0).all();
+	const candidates = rowsResult?.results || [];
+	if (!candidates.length) return { success: true, archived: false, estimatedBytes };
+	const selected = [];
+	let payloadBytes = 0;
+	for (const row of candidates) {
+		const line = JSON.stringify({
+			v: 1, id: row.id, ts: row.ts, minute: row.minute, user: row.user_hash, kind: row.kind, method: row.method,
+			requests: row.request_count, status: row.status, outcome: row.outcome, up: row.bytes_up, down: row.bytes_down,
+			duration: row.duration_ms, country: row.country, colo: row.colo,
+		}) + '\n';
+		const lineBytes = new TextEncoder().encode(line).byteLength;
+		if (selected.length && payloadBytes + lineBytes > archive.单文件字节) break;
+		selected.push({ row, line });
+		payloadBytes += lineBytes;
+	}
+	if (!selected.length) return { success: true, archived: false, estimatedBytes };
+	const firstId = 转换监控数值(selected[0].row.id), lastId = 转换监控数值(selected[selected.length - 1].row.id);
+	const content = selected.map(item => item.line).join('');
+	const contentBytes = new TextEncoder().encode(content);
+	const hashBytes = new Uint8Array(await crypto.subtle.digest('SHA-256', contentBytes));
+	const hash = [...hashBytes.slice(0, 6)].map(value => value.toString(16).padStart(2, '0')).join('');
+	const timestamp = new Date(now).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+	const day = timestamp.slice(0, 8), archiveRoot = `${archive.路径}/${archive.服务名}`, path = `${archiveRoot}/${day.slice(0, 4)}/${day.slice(4, 6)}/${day.slice(6, 8)}/${timestamp}__events-${firstId}-${lastId}__sha256-${hash}.jsonl`;
+	const [owner, repository] = archive.仓库.split('/');
+	if (!owner || !repository) throw new Error('GitHub 归档仓库格式错误');
+	const api = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/contents/${编码GitHub内容路径(path)}`;
+	const headers = {
+		'Authorization': `Bearer ${env.GITHUB_MONITOR_TOKEN}`,
+		'Accept': 'application/vnd.github+json',
+		'X-GitHub-Api-Version': '2022-11-28',
+		'User-Agent': 'edgetunnel-monitor-archiver',
+		'Content-Type': 'application/json',
+	};
+	const upload = await fetch(api, {
+		method: 'PUT', headers,
+		body: JSON.stringify({ message: `monitor: archive ${timestamp} rows ${firstId}-${lastId}`, content: 监控字节转Base64(contentBytes), branch: archive.分支 }),
+	});
+	let uploaded = upload.ok;
+	if (!uploaded && upload.status === 422) uploaded = (await fetch(api + `?ref=${encodeURIComponent(archive.分支)}`, { headers })).ok;
+	if (!uploaded) throw new Error(`GitHub Contents API 返回 ${upload.status}`);
+	await 更新GitHub归档索引(env, archive, { path, archivedAt: now, firstId, lastId, rows: selected.length, bytes: contentBytes.byteLength, sha256: hash });
+	await env.MONITOR_DB.batch([
+		env.MONITOR_DB.prepare('DELETE FROM monitor_events WHERE id <= ?').bind(lastId),
+		env.MONITOR_DB.prepare(`UPDATE monitor_archive_state SET last_archive_ts = ?, last_archive_file = ?, archived_rows = archived_rows + ?, archived_bytes = archived_bytes + ? WHERE id = 1`)
+			.bind(now, path, selected.length, contentBytes.byteLength),
+	]);
+	return { success: true, archived: true, service: archive.服务名, archiveRoot, path, rows: selected.length, bytes: contentBytes.byteLength, repository: archive.仓库, branch: archive.分支 };
+}
+
+function 完成请求监控(monitor, outcome = null) {
+	if (!monitor || monitor.finished) return;
+	monitor.finished = true;
+	if (outcome) monitor.outcome = outcome;
+	const task = 提交监控快照(monitor, monitor.outcome, true);
+	安排监控后台任务(monitor, task);
+}
+
+function 包装监控响应(response, monitor) {
+	if (!monitor) return response;
+	monitor.status = response.status;
+	if (response.status === 101 || response.webSocket) return response;
+	if (!response.body) {
+		monitor.bytesDown = Math.max(0, Number(response.headers.get('content-length')) || 0);
+		完成请求监控(monitor, response.status >= 500 ? 'error' : 'success');
+		return response;
+	}
+	const reader = response.body.getReader();
+	const body = new ReadableStream({
+		async pull(controller) {
+			try {
+				const { done, value } = await reader.read();
+				if (done) {
+					controller.close();
+					完成请求监控(monitor, response.status >= 500 ? 'error' : 'success');
+					return;
+				}
+				记录监控下行(monitor, 监控字节长度(value));
+				controller.enqueue(value);
+			} catch (error) {
+				monitor.outcome = 'error';
+				完成请求监控(monitor, 'error');
+				controller.error(error);
+			}
+		},
+		async cancel(reason) {
+			完成请求监控(monitor, 'client_disconnected');
+			return reader.cancel(reason);
+		},
+	});
+	return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
+async function 处理带轻量监控的请求(request, env, ctx) {
+	let created;
+	try { created = 创建请求监控上下文(request, env, ctx); }
+	catch (error) {
+		console.error(`初始化监控失败，已无监控继续主请求: ${error.message}`);
+		created = { request, monitor: null };
+	}
+	try {
+		const response = await 处理主请求(created.request, env, ctx);
+		return 包装监控响应(response, created.monitor);
+	} catch (error) {
+		if (created.monitor) {
+			created.monitor.status = 500;
+			完成请求监控(created.monitor, 'error');
+		}
+		throw error;
+	}
+}
+
+function 读取D1结果首行(result) {
+	return result?.results?.[0] || {};
+}
+
+function 转换监控数值(value) {
+	const number = Number(value);
+	return Number.isFinite(number) ? number : 0;
+}
+
+function 计算60分钟带宽统计(series, now = Date.now()) {
+	const seriesByMinute = new Map((series || []).map(item => [Number(item.minute), item]));
+	const samples = [];
+	for (let offset = 59; offset >= 0; offset--) {
+		const minute = Math.floor(now / 60000) * 60000 - offset * 60000;
+		const item = seriesByMinute.get(minute) || { bytesUp: 0, bytesDown: 0 };
+		samples.push((转换监控数值(item.bytesUp) + 转换监控数值(item.bytesDown)) * 8 / 60 / 1000000);
+	}
+	const activeSamples = samples.filter(value => value > 0);
+	return {
+		peakMegabitsPerSecond: Math.max(0, ...samples),
+		troughMegabitsPerSecond: Math.min(...samples),
+		activeTroughMegabitsPerSecond: activeSamples.length ? Math.min(...activeSamples) : 0,
+		averageMegabitsPerSecond: samples.reduce((total, value) => total + value, 0) / samples.length,
+	};
+}
+
+async function 获取轻量监控指标响应(env, ctx) {
+	if (!env.MONITOR_DB) return new Response(JSON.stringify({ success: false, error: '未绑定 MONITOR_DB' }), { status: 503, headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' } });
+	try {
+		const config = await 读取监控配置(env);
+		const now = Date.now();
+		const start = new Date(now);
+		start.setUTCHours(0, 0, 0, 0);
+		const startMs = start.getTime(), recentStart = now - 5 * 60 * 1000, seriesStart = now - 60 * 60 * 1000;
+		const results = await env.MONITOR_DB.batch([
+			env.MONITOR_DB.prepare(`SELECT COALESCE(SUM(request_count), 0) AS requests, COUNT(DISTINCT user_hash) AS users,
+				COALESCE(SUM(bytes_up), 0) AS bytes_up, COALESCE(SUM(bytes_down), 0) AS bytes_down,
+				COALESCE(SUM(CASE WHEN outcome = 'error' OR status >= 500 THEN 1 ELSE 0 END), 0) AS errors
+				FROM monitor_events WHERE ts >= ?`).bind(startMs),
+			env.MONITOR_DB.prepare(`SELECT COALESCE(SUM(request_count), 0) AS requests,
+				COALESCE(SUM(bytes_up), 0) AS bytes_up, COALESCE(SUM(bytes_down), 0) AS bytes_down
+				FROM monitor_events WHERE ts >= ?`).bind(recentStart),
+			env.MONITOR_DB.prepare(`SELECT user_hash, COALESCE(SUM(request_count), 0) AS requests,
+				COALESCE(SUM(bytes_up), 0) AS bytes_up, COALESCE(SUM(bytes_down), 0) AS bytes_down,
+				MAX(ts) AS last_seen
+				FROM monitor_events WHERE ts >= ? GROUP BY user_hash
+				ORDER BY (COALESCE(SUM(bytes_up), 0) + COALESCE(SUM(bytes_down), 0)) DESC LIMIT 20`).bind(startMs),
+			env.MONITOR_DB.prepare(`SELECT minute, COALESCE(SUM(request_count), 0) AS requests,
+				COALESCE(SUM(bytes_up), 0) AS bytes_up, COALESCE(SUM(bytes_down), 0) AS bytes_down,
+				COALESCE(SUM(CASE WHEN outcome = 'error' OR status >= 500 THEN 1 ELSE 0 END), 0) AS errors
+				FROM monitor_events WHERE ts >= ? GROUP BY minute ORDER BY minute ASC`).bind(seriesStart),
+			env.MONITOR_DB.prepare(`SELECT kind, COALESCE(SUM(request_count), 0) AS requests,
+				COALESCE(SUM(bytes_up), 0) AS bytes_up, COALESCE(SUM(bytes_down), 0) AS bytes_down
+				FROM monitor_events WHERE ts >= ? GROUP BY kind ORDER BY requests DESC`).bind(startMs),
+			env.MONITOR_DB.prepare(`SELECT CAST(ts / 5000 AS INTEGER) * 5000 AS bucket,
+				COALESCE(SUM(request_count), 0) AS requests, COALESCE(SUM(bytes_up), 0) AS bytes_up,
+				COALESCE(SUM(bytes_down), 0) AS bytes_down,
+				COALESCE(SUM(CASE WHEN outcome = 'error' OR status >= 500 THEN 1 ELSE 0 END), 0) AS errors
+				FROM monitor_events WHERE ts >= ? GROUP BY bucket ORDER BY bucket ASC`).bind(recentStart),
+			env.MONITOR_DB.prepare('SELECT * FROM monitor_archive_state WHERE id = 1'),
+			env.MONITOR_DB.prepare(`SELECT COALESCE(SUM(160 + LENGTH(user_hash) + LENGTH(kind) + LENGTH(method) + LENGTH(outcome) + LENGTH(country) + LENGTH(colo)), 0) AS estimated_bytes,
+				COUNT(*) AS event_rows FROM monitor_events`),
+		]);
+		const summaryRow = 读取D1结果首行(results[0]);
+		const recentRow = 读取D1结果首行(results[1]);
+		const summary = {
+			users: 转换监控数值(summaryRow.users),
+			requests: 转换监控数值(summaryRow.requests),
+			bytesUp: 转换监控数值(summaryRow.bytes_up),
+			bytesDown: 转换监控数值(summaryRow.bytes_down),
+			errors: 转换监控数值(summaryRow.errors),
+		};
+		summary.bytesTotal = summary.bytesUp + summary.bytesDown;
+		summary.averageRequestsPerUser = summary.users ? summary.requests / summary.users : 0;
+		summary.averageBytesPerUser = summary.users ? summary.bytesTotal / summary.users : 0;
+		const recentBytes = 转换监控数值(recentRow.bytes_up) + 转换监控数值(recentRow.bytes_down);
+		const speed = {
+			requestsPerMinute: 转换监控数值(recentRow.requests) / 5,
+			bytesPerMinute: recentBytes / 5,
+			megabitsPerSecond: recentBytes * 8 / 300 / 1000000,
+		};
+		const users = (results[2]?.results || []).map(row => ({
+			userHash: String(row.user_hash || ''), requests: 转换监控数值(row.requests),
+			bytesUp: 转换监控数值(row.bytes_up), bytesDown: 转换监控数值(row.bytes_down),
+			lastSeen: 转换监控数值(row.last_seen),
+		}));
+		const series = (results[3]?.results || []).map(row => ({
+			minute: 转换监控数值(row.minute), requests: 转换监控数值(row.requests),
+			bytesUp: 转换监控数值(row.bytes_up), bytesDown: 转换监控数值(row.bytes_down), errors: 转换监控数值(row.errors),
+		}));
+		Object.assign(speed, 计算60分钟带宽统计(series, now));
+		const byKind = (results[4]?.results || []).map(row => ({
+			kind: String(row.kind || 'unknown'), requests: 转换监控数值(row.requests),
+			bytesUp: 转换监控数值(row.bytes_up), bytesDown: 转换监控数值(row.bytes_down),
+		}));
+		const realtimeSeries = (results[5]?.results || []).map(row => ({
+			bucket: 转换监控数值(row.bucket), requests: 转换监控数值(row.requests),
+			bytesUp: 转换监控数值(row.bytes_up), bytesDown: 转换监控数值(row.bytes_down), errors: 转换监控数值(row.errors),
+		}));
+		const archiveState = 读取D1结果首行(results[6]);
+		const localState = 读取D1结果首行(results[7]);
+		const archive = {
+			enabled: config.GitHub归档.启用,
+			configured: Boolean(env.GITHUB_MONITOR_TOKEN),
+			repository: config.GitHub归档.仓库,
+			branch: config.GitHub归档.分支,
+			service: config.GitHub归档.服务名,
+			path: `${config.GitHub归档.路径}/${config.GitHub归档.服务名}`,
+			lastCheckAt: 转换监控数值(archiveState.last_check_ts),
+			lastArchiveAt: 转换监控数值(archiveState.last_archive_ts),
+			lastArchiveFile: String(archiveState.last_archive_file || ''),
+			archivedRows: 转换监控数值(archiveState.archived_rows),
+			archivedBytes: 转换监控数值(archiveState.archived_bytes),
+			localEstimatedBytes: 转换监控数值(localState.estimated_bytes),
+			localRows: 转换监控数值(localState.event_rows),
+		};
+		const cleanup = env.MONITOR_DB.prepare('DELETE FROM monitor_events WHERE ts < ?').bind(now - config.保留天数 * 86400000).run().catch(error => console.error(`清理监控数据失败: ${error.message}`));
+		try { ctx?.waitUntil(cleanup) } catch (_) { }
+		return new Response(JSON.stringify({ success: true, enabled: config.启用, updatedAt: now, windowStart: startMs, refreshSeconds: config.刷新秒, precisionMs: 5000, summary, speed, users, series, realtimeSeries, byKind, archive }), {
+			status: 200,
+			headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' }
+		});
+	} catch (error) {
+		return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' } });
+	}
+}
+
+function 轻量监控面板HTML() {
+	return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>轻量监控 - edgetunnel</title><style>
+	:root{color-scheme:light dark;--bg:#f5f7fb;--card:#fff;--text:#172033;--muted:#6b7280;--line:#e5e7eb;--orange:#f6821f;--blue:#2563eb;--green:#10b981;--red:#ef4444}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.wrap{max-width:1180px;margin:auto;padding:24px}.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}.top h1{font-size:24px;margin:0}.btn{border:0;border-radius:10px;padding:10px 14px;background:var(--orange);color:#fff;text-decoration:none;font-weight:700;cursor:pointer}.status{font-size:13px;color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card,.panel{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 24px rgba(15,23,42,.05)}.card{padding:18px}.label{font-size:13px;color:var(--muted);margin-bottom:8px}.value{font-size:25px;font-weight:800;word-break:break-word}.panels{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.panel{padding:18px;overflow:auto}.panel h2{font-size:16px;margin:0 0 14px}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:10px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--muted)}.bar-row{display:grid;grid-template-columns:70px 1fr 80px;gap:10px;align-items:center;margin:10px 0;font-size:13px}.bar{height:10px;border-radius:999px;background:#e5e7eb;overflow:hidden}.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--orange),#faab41);border-radius:inherit}.empty{color:var(--muted);padding:20px;text-align:center}.off{color:var(--red);font-weight:700}@media(max-width:800px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.panels{grid-template-columns:1fr}.wrap{padding:14px}}@media(prefers-color-scheme:dark){:root{--bg:#111318;--card:#1a1d24;--text:#f4f4f5;--muted:#a1a1aa;--line:#30343d}}
+	</style></head><body><main class="wrap"><div class="top"><div><h1>📊 站点轻量监控</h1><div class="status" id="status">正在加载...</div></div><a class="btn" href="/admin">返回后台</a></div>
+	<section class="grid"><div class="card"><div class="label">今日用户</div><div class="value" id="users">-</div></div><div class="card"><div class="label">今日请求</div><div class="value" id="requests">-</div></div><div class="card"><div class="label">请求速度（5分钟）</div><div class="value" id="rpm">-</div></div><div class="card"><div class="label">平均带宽（5分钟）</div><div class="value" id="mbps">-</div></div><div class="card"><div class="label">总上行</div><div class="value" id="up">-</div></div><div class="card"><div class="label">总下行</div><div class="value" id="down">-</div></div><div class="card"><div class="label">总流量</div><div class="value" id="total">-</div></div><div class="card"><div class="label">人均流量 / 请求</div><div class="value" id="average">-</div></div></section>
+	<section class="panels"><div class="panel"><h2>协议分布</h2><div id="kinds"></div></div><div class="panel"><h2>匿名用户 Top 20</h2><table><thead><tr><th>用户</th><th>请求</th><th>上行</th><th>下行</th><th>最后访问</th></tr></thead><tbody id="userRows"></tbody></table></div></section></main><script>
+	(function(){var timer=null;function num(v,d){return Number(v||0).toLocaleString(undefined,{maximumFractionDigits:d===undefined?2:d})}function bytes(v){v=Number(v||0);var u=['B','KB','MB','GB','TB'],i=0;while(v>=1024&&i<u.length-1){v/=1024;i++}return num(v,i?2:0)+' '+u[i]}function put(id,value){document.getElementById(id).textContent=value}function render(data){if(!data.success)throw new Error(data.error||'加载失败');var s=data.summary||{},sp=data.speed||{};put('users',num(s.users,0));put('requests',num(s.requests,0));put('rpm',num(sp.requestsPerMinute,2)+' req/min');put('mbps',num(sp.megabitsPerSecond,3)+' Mbps');put('up',bytes(s.bytesUp));put('down',bytes(s.bytesDown));put('total',bytes(s.bytesTotal));put('average',bytes(s.averageBytesPerUser)+' / '+num(s.averageRequestsPerUser,1));var status=document.getElementById('status');status.innerHTML=(data.enabled?'监控已开启':'<span class="off">监控已关闭</span>')+' · 更新于 '+new Date(data.updatedAt).toLocaleString();var kinds=document.getElementById('kinds'),list=data.byKind||[],max=Math.max.apply(null,[1].concat(list.map(function(x){return x.requests})));kinds.innerHTML=list.length?list.map(function(x){var total=Number(x.bytesUp||0)+Number(x.bytesDown||0);return '<div class="bar-row"><span>'+x.kind+'</span><div class="bar"><i style="width:'+Math.max(2,x.requests/max*100)+'%"></i></div><span>'+num(x.requests,0)+' / '+bytes(total)+'</span></div>'}).join(''):'<div class="empty">暂无数据</div>';var rows=document.getElementById('userRows');rows.innerHTML=(data.users||[]).map(function(x){return '<tr><td><code>'+x.userHash+'</code></td><td>'+num(x.requests,0)+'</td><td>'+bytes(x.bytesUp)+'</td><td>'+bytes(x.bytesDown)+'</td><td>'+new Date(x.lastSeen).toLocaleTimeString()+'</td></tr>'}).join('')||'<tr><td colspan="5" class="empty">暂无数据</td></tr>';if(timer)clearTimeout(timer);timer=setTimeout(load,Math.max(10,Number(data.refreshSeconds||30))*1000)}async function load(){try{var r=await fetch('/admin/metrics.json',{cache:'no-store'});render(await r.json())}catch(e){document.getElementById('status').textContent='加载失败：'+e.message;if(timer)clearTimeout(timer);timer=setTimeout(load,30000)}}load()})();
+	</script></body></html>`;
+}
+
+function 在HTML关闭Body前注入(html, injection) {
+	const lowerHTML = html.toLowerCase();
+	const closingBodyIndex = lowerHTML.lastIndexOf('</body>');
+	return closingBodyIndex >= 0 ? html.slice(0, closingBodyIndex) + injection + html.slice(closingBodyIndex) : html + injection;
+}
+
+function 构建高精度实时监控注入() {
+	return `<style>#lightMonitorModule .lm-archive-line{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(59,130,246,.06);color:#64748b;font-size:12px}#lightMonitorModule .lm-archive-link{color:#2563eb;font-weight:700;text-decoration:none}html.dark-mode #lightMonitorModule .lm-archive-line{background:rgba(59,130,246,.11);color:#a1a1aa}</style><script>
+	(function(){if(window.__edgetunnelMonitorRealtimeInstalled)return;window.__edgetunnelMonitorRealtimeInstalled=true;window.__edgetunnelMonitorSummaryInstalled=true;var lastData=null,currentMode='requests',timer=null,refreshMs=5000;function number(value,digits){return Number(value||0).toLocaleString(undefined,{maximumFractionDigits:digits===undefined?2:digits})}function bytes(value){value=Number(value||0);var units=['B','KB','MB','GB','TB'],index=0;while(value>=1024&&index<units.length-1){value/=1024;index++}return number(value,index?2:0)+' '+units[index]}function rate(value){value=Number(value||0);return value>=.001?number(value,3)+' Mbps':number(value*1000,2)+' Kbps'}function text(id,value){var element=document.getElementById(id);if(element)element.textContent=value}function userRows(data){var body=document.getElementById('lmUserRows');if(!body)return;var users=(data&&data.users)||[],grand=Number(data&&data.summary&&data.summary.bytesTotal||0);body.innerHTML=users.slice(0,20).map(function(user){var total=Number(user.bytesUp||0)+Number(user.bytesDown||0),share=grand?total/grand*100:0;return '<tr><td><code>'+user.userHash+'</code></td><td>'+number(user.requests,0)+'</td><td>'+bytes(user.bytesUp)+'</td><td>'+bytes(user.bytesDown)+'</td><td>'+bytes(total)+'</td><td>'+number(share,1)+'%</td><td>'+new Date(user.lastSeen).toLocaleTimeString()+'</td></tr>'}).join('')||'<tr><td colspan="7">暂无数据</td></tr>'}function points(data,mode){var realtime=Array.isArray(data&&data.realtimeSeries),source=realtime?data.realtimeSeries:(data&&data.series)||[],step=realtime?Number(data.precisionMs||5000):60000,key=realtime?'bucket':'minute',count=60,map=new Map(source.map(function(item){return [Number(item[key]),item]})),now=Math.floor(Date.now()/step)*step,result=[];for(var index=count-1;index>=0;index--){var bucket=now-index*step,item=map.get(bucket)||{};result.push({time:bucket,value:mode==='traffic'?Number(item.bytesUp||0)+Number(item.bytesDown||0):Number(item.requests||0)})}return {items:result,label:realtime?'-5 min':'-60 min'}}function draw(){if(!lastData||currentMode==='users')return;var canvas=document.getElementById('lmWaveCanvas');if(!canvas)return;var rect=canvas.getBoundingClientRect(),pixel=window.devicePixelRatio||1,width=Math.max(320,rect.width),height=Math.max(150,rect.height);canvas.width=Math.round(width*pixel);canvas.height=Math.round(height*pixel);var context=canvas.getContext('2d');context.setTransform(pixel,0,0,pixel,0,0);context.clearRect(0,0,width,height);var dark=document.documentElement.classList.contains('dark-mode'),grid=dark?'rgba(255,255,255,.09)':'rgba(15,23,42,.08)',labelColor=dark?'#a1a1aa':'#64748b',dataset=points(lastData,currentMode),values=dataset.items.map(function(item){return item.value}),maximum=Math.max.apply(null,[1].concat(values)),pad={left:54,right:14,top:16,bottom:28},chartWidth=width-pad.left-pad.right,chartHeight=height-pad.top-pad.bottom;context.strokeStyle=grid;context.fillStyle=labelColor;context.font='11px sans-serif';context.lineWidth=1;for(var row=0;row<=4;row++){var y=pad.top+chartHeight*row/4;context.beginPath();context.moveTo(pad.left,y);context.lineTo(width-pad.right,y);context.stroke();var value=maximum*(4-row)/4;context.fillText(currentMode==='traffic'?bytes(value):number(value,1),4,y+4)}function xAt(index){return pad.left+chartWidth*index/(dataset.items.length-1)}function yAt(value){return pad.top+chartHeight-(value/maximum)*chartHeight}var gradient=context.createLinearGradient(0,pad.top,0,pad.top+chartHeight);gradient.addColorStop(0,currentMode==='traffic'?'rgba(59,130,246,.38)':'rgba(246,130,31,.38)');gradient.addColorStop(1,'rgba(255,255,255,0)');context.beginPath();dataset.items.forEach(function(item,index){var x=xAt(index),y=yAt(item.value);if(index===0)context.moveTo(x,y);else context.lineTo(x,y)});context.lineTo(xAt(dataset.items.length-1),pad.top+chartHeight);context.lineTo(xAt(0),pad.top+chartHeight);context.closePath();context.fillStyle=gradient;context.fill();context.beginPath();dataset.items.forEach(function(item,index){var x=xAt(index),y=yAt(item.value);if(index===0)context.moveTo(x,y);else context.lineTo(x,y)});context.strokeStyle=currentMode==='traffic'?'#3b82f6':'#f6821f';context.lineWidth=2.5;context.stroke();context.fillStyle=labelColor;context.fillText(dataset.label,pad.left,height-7);context.fillText('现在',width-pad.right-24,height-7)}function mode(value){currentMode=value;document.querySelectorAll('#lightMonitorModule .lm-mode').forEach(function(button){button.classList.toggle('active',button.dataset.mode===value)});var chart=document.getElementById('lmChartWrap'),users=document.getElementById('lmUserView');if(chart)chart.style.display=value==='users'?'none':'block';if(users)users.style.display=value==='users'?'block':'none';if(value==='users')userRows(lastData);else draw()}window.setLightMonitorMode=mode;function render(data){if(!data||!data.success)throw new Error(data&&data.error||'加载失败');lastData=data;refreshMs=Math.max(3000,Number(data.refreshSeconds||5)*1000);var summary=data.summary||{},speed=data.speed||{},archive=data.archive||{};text('lmUsers',number(summary.users,0));text('lmRequests',number(summary.requests,0));text('lmReqSpeed',number(speed.requestsPerMinute,2)+' req/min');text('lmBandwidth',rate(speed.megabitsPerSecond));text('lmPeak',rate(speed.peakMegabitsPerSecond));text('lmTrough',rate(speed.activeTroughMegabitsPerSecond));text('lmAverageBandwidth',rate(speed.averageMegabitsPerSecond));text('lmTotal',bytes(summary.bytesTotal));text('lmAverage',bytes(summary.averageBytesPerUser)+' / '+number(summary.averageRequestsPerUser,1));text('lmStatus',(data.enabled?'监控已开启':'监控已关闭')+' · '+number(data.precisionMs||5000,0)+'ms 精度 · 上行 '+bytes(summary.bytesUp)+' · 下行 '+bytes(summary.bytesDown)+' · 错误 '+number(summary.errors,0)+' · '+new Date(data.updatedAt).toLocaleTimeString());text('lmArchiveStatus',(archive.configured?'GitHub API 已连接':'GitHub API 未配置')+' · 本地 '+number(archive.localRows,0)+' 行 / '+bytes(archive.localEstimatedBytes)+' · 已归档 '+number(archive.archivedRows,0)+' 行 / '+bytes(archive.archivedBytes));var link=document.getElementById('lmArchiveLink');if(link&&archive.repository){link.href='https://github.com/'+archive.repository+'/tree/'+encodeURIComponent(archive.branch||'main')+'/'+archive.path}userRows(data);draw()}async function load(){var button=document.getElementById('lmRefreshBtn');if(button)button.disabled=true;try{var response=await fetch('/admin/metrics.json',{cache:'no-store'});render(await response.json())}catch(error){text('lmStatus','加载失败：'+error.message)}finally{if(button)button.disabled=false;if(timer)clearTimeout(timer);timer=setTimeout(load,refreshMs)}}window.loadLightMonitorSummary=load;function install(){if(document.getElementById('lightMonitorModule'))return true;var network=Array.from(document.querySelectorAll('.module')).find(function(item){var title=item.querySelector('.module-title');return title&&title.textContent.indexOf('当前网络信息')>=0}),anchor=network||document.querySelector('.module');if(!anchor||!anchor.parentNode)return false;var module=document.createElement('div');module.className='module';module.id='lightMonitorModule';module.innerHTML='<div class="module-title" onclick="toggleModule(this)"><span class="lm-title-left"><svg class="lm-wave-icon" viewBox="0 0 24 24"><path d="M3 13h3l2-6 4 11 3-8 2 3h4"></path></svg><span>流量监控</span></span><span class="lm-title-right"><span class="lm-live">LIVE</span><svg class="collapse-icon" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"></path></svg></span></div><div class="module-content"><div class="lm-summary-grid"><div class="lm-card"><div class="lm-label">今日用户</div><div class="lm-value" id="lmUsers">-</div></div><div class="lm-card"><div class="lm-label">今日请求</div><div class="lm-value" id="lmRequests">-</div></div><div class="lm-card"><div class="lm-label">请求速度（5分钟）</div><div class="lm-value" id="lmReqSpeed">-</div></div><div class="lm-card"><div class="lm-label">近5分钟平均带宽</div><div class="lm-value" id="lmBandwidth">-</div></div><div class="lm-card"><div class="lm-label">60分钟带宽峰值</div><div class="lm-value" id="lmPeak">-</div></div><div class="lm-card"><div class="lm-label">活跃带宽谷值</div><div class="lm-value" id="lmTrough">-</div></div><div class="lm-card"><div class="lm-label">60分钟平均带宽</div><div class="lm-value" id="lmAverageBandwidth">-</div></div><div class="lm-card"><div class="lm-label">总流量</div><div class="lm-value" id="lmTotal">-</div></div><div class="lm-card"><div class="lm-label">人均流量 / 请求</div><div class="lm-value" id="lmAverage">-</div></div></div><div class="lm-toolbar"><div class="lm-switches"><button type="button" class="lm-mode active" data-mode="requests" onclick="setLightMonitorMode(&quot;requests&quot;)">请求波形</button><button type="button" class="lm-mode" data-mode="traffic" onclick="setLightMonitorMode(&quot;traffic&quot;)">流量波形</button><button type="button" class="lm-mode" data-mode="users" onclick="setLightMonitorMode(&quot;users&quot;)">用户监控</button></div><div class="lm-actions"><button type="button" class="lm-btn lm-refresh" id="lmRefreshBtn" onclick="loadLightMonitorSummary()">刷新</button><a class="lm-btn lm-detail" href="/admin/monitor">详细面板</a></div></div><div class="lm-chart-wrap" id="lmChartWrap"><canvas id="lmWaveCanvas"></canvas></div><div class="lm-user-view" id="lmUserView"><table><thead><tr><th>匿名用户</th><th>请求</th><th>上行</th><th>下行</th><th>总流量</th><th>占比</th><th>最后访问</th></tr></thead><tbody id="lmUserRows"></tbody></table></div><div class="lm-status" id="lmStatus">正在加载...</div><div class="lm-archive-line"><span id="lmArchiveStatus">GitHub API 归档状态读取中...</span><a id="lmArchiveLink" class="lm-archive-link" href="https://github.com/hhhaiai/Picture/tree/main/data/mysimivv" target="_blank" rel="noopener">GitHub 长期归档 ↗</a></div></div>';anchor.parentNode.insertBefore(module,anchor);load();window.addEventListener('resize',function(){if(currentMode!=='users')draw()});return true}function start(){if(install())return;var attempts=0,wait=setInterval(function(){attempts++;if(install()||attempts>50)clearInterval(wait)},200)}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start()})();
+	</script>`;
+}
+
+function 构建轻量监控汇总模块注入() {
+	return `<style>
+	#lightMonitorModule{display:block}#lightMonitorModule .lm-title-left,#lightMonitorModule .lm-title-right{display:flex;align-items:center;gap:9px}#lightMonitorModule .lm-wave-icon{width:25px;height:25px;fill:none;stroke:#f6821f;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}#lightMonitorModule .lm-live{font-size:10px;letter-spacing:.12em;color:#10b981;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.28);padding:4px 7px;border-radius:999px}#lightMonitorModule .lm-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}#lightMonitorModule .lm-card{padding:14px;border:1px solid #e5e7eb;border-radius:12px;background:#fff;box-shadow:0 4px 14px rgba(15,23,42,.04)}#lightMonitorModule .lm-label{font-size:12px;color:#6b7280;margin-bottom:6px}#lightMonitorModule .lm-value{font-size:20px;font-weight:800;color:#1f2937;word-break:break-word}#lightMonitorModule .lm-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:8px 0 12px}#lightMonitorModule .lm-switches,#lightMonitorModule .lm-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}#lightMonitorModule .lm-mode,#lightMonitorModule .lm-btn{border:0;border-radius:9px;padding:8px 12px;font-weight:700;cursor:pointer;text-decoration:none;font-size:12px}#lightMonitorModule .lm-mode{background:#f3f4f6;color:#6b7280}#lightMonitorModule .lm-mode.active{background:linear-gradient(135deg,#f6821f,#faab41);color:#fff}#lightMonitorModule .lm-refresh{background:#eef2ff;color:#4338ca}#lightMonitorModule .lm-detail{background:#111827;color:#fff}#lightMonitorModule .lm-chart-wrap{height:230px;border:1px solid #e5e7eb;border-radius:14px;padding:10px;background:linear-gradient(180deg,rgba(59,130,246,.04),rgba(246,130,31,.02));position:relative}#lightMonitorModule #lmWaveCanvas{width:100%;height:100%;display:block}#lightMonitorModule .lm-user-view{display:none;overflow:auto;border:1px solid #e5e7eb;border-radius:14px}#lightMonitorModule .lm-user-view table{width:100%;border-collapse:collapse;font-size:12px}#lightMonitorModule .lm-user-view th,#lightMonitorModule .lm-user-view td{padding:9px 10px;border-bottom:1px solid #e5e7eb;text-align:left;white-space:nowrap}#lightMonitorModule .lm-user-view th{color:#6b7280}#lightMonitorModule .lm-status{font-size:12px;color:#6b7280;margin-top:9px}html.dark-mode #lightMonitorModule .lm-card,html.dark-mode #lightMonitorModule .lm-chart-wrap,html.dark-mode #lightMonitorModule .lm-user-view{background:#202127;border-color:#353740}html.dark-mode #lightMonitorModule .lm-value{color:#f4f4f5}html.dark-mode #lightMonitorModule .lm-label,html.dark-mode #lightMonitorModule .lm-status,html.dark-mode #lightMonitorModule .lm-user-view th{color:#a1a1aa}html.dark-mode #lightMonitorModule .lm-mode{background:#2b2d34;color:#b8b9c0}@media(max-width:760px){#lightMonitorModule .lm-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}#lightMonitorModule .lm-chart-wrap{height:190px}}
+	</style><script>
+	(function(){if(window.__edgetunnelMonitorSummaryInstalled)return;window.__edgetunnelMonitorSummaryInstalled=true;var lastData=null,currentMode='requests',refreshTimer=null;function fmtNum(value,digits){return Number(value||0).toLocaleString(undefined,{maximumFractionDigits:digits===undefined?2:digits})}function fmtBytes(value){value=Number(value||0);var units=['B','KB','MB','GB','TB'],index=0;while(value>=1024&&index<units.length-1){value/=1024;index++}return fmtNum(value,index?2:0)+' '+units[index]}function fmtRate(value){value=Number(value||0);return value>=.001?fmtNum(value,3)+' Mbps':fmtNum(value*1000,2)+' Kbps'}function setText(id,value){var element=document.getElementById(id);if(element)element.textContent=value}function renderUsers(data){var body=document.getElementById('lmUserRows');if(!body)return;var users=(data&&data.users)||[],grand=Number(data&&data.summary&&data.summary.bytesTotal||0);body.innerHTML=users.slice(0,12).map(function(user){var total=Number(user.bytesUp||0)+Number(user.bytesDown||0),share=grand?total/grand*100:0;return '<tr><td><code>'+user.userHash+'</code></td><td>'+fmtNum(user.requests,0)+'</td><td>'+fmtBytes(user.bytesUp)+'</td><td>'+fmtBytes(user.bytesDown)+'</td><td>'+fmtBytes(total)+'</td><td>'+fmtNum(share,1)+'%</td><td>'+new Date(user.lastSeen).toLocaleTimeString()+'</td></tr>'}).join('')||'<tr><td colspan="7">暂无数据</td></tr>'}function buildSeries(data,mode){var map=new Map(((data&&data.series)||[]).map(function(item){return [Number(item.minute),item]})),now=Math.floor(Date.now()/60000)*60000,points=[];for(var i=59;i>=0;i--){var minute=now-i*60000,item=map.get(minute)||{};points.push({minute:minute,value:mode==='traffic'?Number(item.bytesUp||0)+Number(item.bytesDown||0):Number(item.requests||0)})}return points}function drawChart(){if(!lastData||currentMode==='users')return;var canvas=document.getElementById('lmWaveCanvas');if(!canvas)return;var rect=canvas.getBoundingClientRect(),ratio=window.devicePixelRatio||1,width=Math.max(320,rect.width),height=Math.max(150,rect.height);canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);var ctx=canvas.getContext('2d');ctx.setTransform(ratio,0,0,ratio,0,0);ctx.clearRect(0,0,width,height);var dark=document.documentElement.classList.contains('dark-mode'),grid=dark?'rgba(255,255,255,.09)':'rgba(15,23,42,.08)',text=dark?'#a1a1aa':'#6b7280',points=buildSeries(lastData,currentMode),values=points.map(function(p){return p.value}),max=Math.max.apply(null,[1].concat(values)),pad={l:52,r:14,t:15,b:27},cw=width-pad.l-pad.r,ch=height-pad.t-pad.b;ctx.strokeStyle=grid;ctx.fillStyle=text;ctx.font='11px sans-serif';ctx.lineWidth=1;for(var y=0;y<=4;y++){var py=pad.t+ch*y/4;ctx.beginPath();ctx.moveTo(pad.l,py);ctx.lineTo(width-pad.r,py);ctx.stroke();var label=max*(4-y)/4;ctx.fillText(currentMode==='traffic'?fmtBytes(label):fmtNum(label,0),4,py+4)}var gradient=ctx.createLinearGradient(0,pad.t,0,pad.t+ch);gradient.addColorStop(0,currentMode==='traffic'?'rgba(59,130,246,.34)':'rgba(246,130,31,.34)');gradient.addColorStop(1,'rgba(255,255,255,0)');function xAt(i){return pad.l+cw*i/(points.length-1)}function yAt(v){return pad.t+ch-(v/max)*ch}ctx.beginPath();points.forEach(function(point,i){var x=xAt(i),y=yAt(point.value);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)});ctx.lineTo(xAt(points.length-1),pad.t+ch);ctx.lineTo(xAt(0),pad.t+ch);ctx.closePath();ctx.fillStyle=gradient;ctx.fill();ctx.beginPath();points.forEach(function(point,i){var x=xAt(i),y=yAt(point.value);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)});ctx.strokeStyle=currentMode==='traffic'?'#3b82f6':'#f6821f';ctx.lineWidth=2.4;ctx.stroke();ctx.fillStyle=text;ctx.fillText('-60 min',pad.l,height-7);ctx.fillText('现在',width-pad.r-24,height-7)}function setMode(mode){currentMode=mode;document.querySelectorAll('#lightMonitorModule .lm-mode').forEach(function(button){button.classList.toggle('active',button.dataset.mode===mode)});var chart=document.getElementById('lmChartWrap'),users=document.getElementById('lmUserView');if(chart)chart.style.display=mode==='users'?'none':'block';if(users)users.style.display=mode==='users'?'block':'none';if(mode==='users')renderUsers(lastData);else drawChart()}window.setLightMonitorMode=setMode;function render(data){if(!data||!data.success)throw new Error(data&&data.error||'加载失败');lastData=data;var summary=data.summary||{},speed=data.speed||{};setText('lmUsers',fmtNum(summary.users,0));setText('lmRequests',fmtNum(summary.requests,0));setText('lmReqSpeed',fmtNum(speed.requestsPerMinute,2)+' req/min');setText('lmBandwidth',fmtRate(speed.megabitsPerSecond));setText('lmPeak',fmtRate(speed.peakMegabitsPerSecond));setText('lmTrough',fmtRate(speed.activeTroughMegabitsPerSecond));setText('lmAverageBandwidth',fmtRate(speed.averageMegabitsPerSecond));setText('lmTotal',fmtBytes(summary.bytesTotal));setText('lmAverage',fmtBytes(summary.averageBytesPerUser)+' / '+fmtNum(summary.averageRequestsPerUser,1));setText('lmStatus',(data.enabled?'监控已开启':'监控已关闭')+' · 上行 '+fmtBytes(summary.bytesUp)+' · 下行 '+fmtBytes(summary.bytesDown)+' · 错误 '+fmtNum(summary.errors,0)+' · '+new Date(data.updatedAt).toLocaleTimeString());renderUsers(data);drawChart()}async function load(){var button=document.getElementById('lmRefreshBtn');if(button)button.disabled=true;try{var response=await fetch('/admin/metrics.json',{cache:'no-store'});render(await response.json())}catch(error){setText('lmStatus','加载失败：'+error.message)}finally{if(button)button.disabled=false;if(refreshTimer)clearTimeout(refreshTimer);refreshTimer=setTimeout(load,30000)}}window.loadLightMonitorSummary=load;function install(){if(document.getElementById('lightMonitorModule'))return true;var network=Array.from(document.querySelectorAll('.module')).find(function(item){var title=item.querySelector('.module-title');return title&&title.textContent.indexOf('当前网络信息')>=0}),anchor=network||document.getElementById('cfUsageModule')||document.querySelector('.module');if(!anchor||!anchor.parentNode)return false;var module=document.createElement('div');module.className='module';module.id='lightMonitorModule';module.innerHTML='<div class="module-title" onclick="toggleModule(this)"><span class="lm-title-left"><svg class="lm-wave-icon" viewBox="0 0 24 24"><path d="M3 13h3l2-6 4 11 3-8 2 3h4"></path></svg><span>流量监控</span></span><span class="lm-title-right"><span class="lm-live">LIVE</span><svg class="collapse-icon" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"></path></svg></span></div><div class="module-content"><div class="lm-summary-grid"><div class="lm-card"><div class="lm-label">今日用户</div><div class="lm-value" id="lmUsers">-</div></div><div class="lm-card"><div class="lm-label">今日请求</div><div class="lm-value" id="lmRequests">-</div></div><div class="lm-card"><div class="lm-label">请求速度（5分钟）</div><div class="lm-value" id="lmReqSpeed">-</div></div><div class="lm-card"><div class="lm-label">近5分钟平均带宽</div><div class="lm-value" id="lmBandwidth">-</div></div><div class="lm-card"><div class="lm-label">60分钟带宽峰值</div><div class="lm-value" id="lmPeak">-</div></div><div class="lm-card"><div class="lm-label">活跃带宽谷值</div><div class="lm-value" id="lmTrough">-</div></div><div class="lm-card"><div class="lm-label">60分钟平均带宽</div><div class="lm-value" id="lmAverageBandwidth">-</div></div><div class="lm-card"><div class="lm-label">总流量</div><div class="lm-value" id="lmTotal">-</div></div><div class="lm-card"><div class="lm-label">人均流量 / 请求</div><div class="lm-value" id="lmAverage">-</div></div></div><div class="lm-toolbar"><div class="lm-switches"><button type="button" class="lm-mode active" data-mode="requests" onclick="setLightMonitorMode(&quot;requests&quot;)">请求波形</button><button type="button" class="lm-mode" data-mode="traffic" onclick="setLightMonitorMode(&quot;traffic&quot;)">流量波形</button><button type="button" class="lm-mode" data-mode="users" onclick="setLightMonitorMode(&quot;users&quot;)">用户监控</button></div><div class="lm-actions"><button type="button" class="lm-btn lm-refresh" id="lmRefreshBtn" onclick="loadLightMonitorSummary()">刷新</button><a class="lm-btn lm-detail" href="/admin/monitor">详细面板</a></div></div><div class="lm-chart-wrap" id="lmChartWrap"><canvas id="lmWaveCanvas"></canvas></div><div class="lm-user-view" id="lmUserView"><table><thead><tr><th>匿名用户</th><th>请求</th><th>上行</th><th>下行</th><th>总流量</th><th>占比</th><th>最后访问</th></tr></thead><tbody id="lmUserRows"></tbody></table></div><div class="lm-status" id="lmStatus">正在加载...</div></div>';anchor.parentNode.insertBefore(module,anchor);load();window.addEventListener('resize',function(){if(currentMode!=='users')drawChart()});return true}function start(){if(install())return;var tries=0,timer=setInterval(function(){tries++;if(install()||tries>50)clearInterval(timer)},200)}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start()})();
+	</script>`;
+}
+
+async function 注入轻量监控高级设置(response) {
+	const contentType = response.headers.get('content-type') || '';
+	if (!contentType.includes('text/html')) return response;
+	const html = await response.text();
+	const injection = `<style>#monitorSettingGroup .monitor-setting-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}#monitorSettingGroup .monitor-open-btn{display:inline-flex;text-decoration:none;padding:9px 13px;border-radius:9px;background:linear-gradient(135deg,#f6821f,#faab41);color:#fff;font-weight:700;font-size:13px}</style><script>
+	(function(){if(window.__edgetunnelMonitorSettingInstalled)return;window.__edgetunnelMonitorSettingInstalled=true;function install(){var module=Array.from(document.querySelectorAll('.module.advanced-module')).find(function(item){var title=item.querySelector('.module-title');return title&&title.textContent.indexOf('详细配置信息')>=0});if(!module||document.getElementById('monitorSettingGroup'))return false;var footer=module.querySelector('.module-footer');if(!footer)return false;var row=document.createElement('div');row.className='form-group';row.id='monitorSettingGroup';row.innerHTML='<label for="enableLightMonitor">站点轻量监控</label><div class="input-wrapper monitor-setting-actions"><div class="checkbox-group"><input type="checkbox" id="enableLightMonitor" title="统计请求数、匿名用户数与上下行流量，默认开启"><label for="enableLightMonitor" class="checkbox-label">启用（默认开启）</label></div><a class="monitor-open-btn" href="/admin/monitor">📊 查看监控</a></div>';footer.parentNode.insertBefore(row,footer);var checkbox=document.getElementById('enableLightMonitor');function sync(){try{checkbox.checked=!currentConfig||!currentConfig.监控||currentConfig.监控.启用!==false}catch(_){checkbox.checked=true}}checkbox.addEventListener('change',function(){if(typeof markModified==='function')markModified('config')});var originalSave=window.saveConfig;if(typeof originalSave==='function'){window.saveConfig=async function(){if(typeof currentConfig!=='undefined'){currentConfig.监控=Object.assign({启用:true,保留天数:7,刷新秒:30},currentConfig.监控||{}, {启用:checkbox.checked})}return originalSave.apply(this,arguments)}}var originalCancel=window.cancelEdit;if(typeof originalCancel==='function'){window.cancelEdit=function(section){var result=originalCancel.apply(this,arguments);if(section==='config')setTimeout(sync,0);return result}}var tries=0,wait=setInterval(function(){tries++;try{if(typeof currentConfig!=='undefined'&&currentConfig){sync();clearInterval(wait)}}catch(_){}if(tries>50)clearInterval(wait)},200);sync();return true}function start(){if(install())return;var count=0,timer=setInterval(function(){count++;if(install()||count>50)clearInterval(timer)},200)}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start()})();
+	</script>`;
+	const headers = new Headers(response.headers);
+	headers.set('Content-Type', 'text/html;charset=utf-8');
+	headers.set('Cache-Control', 'no-store');
+	headers.delete('Content-Length');
+	headers.delete('Content-Encoding');
+	headers.delete('ETag');
+	const output = 在HTML关闭Body前注入(html, 构建高精度实时监控注入() + 构建轻量监控汇总模块注入() + injection);
+	return new Response(output, { status: response.status, statusText: response.statusText, headers });
+}
+
+export default {
+	async fetch(request, env, ctx) {
+		return 处理带轻量监控的请求(request, env, ctx);
+	}
 };
+
+export { 标准化监控配置, 监控字节长度, 识别监控类型, 转换监控数值, 计算60分钟带宽统计, 在HTML关闭Body前注入, 构建高精度实时监控注入, 构建轻量监控汇总模块注入 };
 ///////////////////////////////////////////////////////////////////////叉HTTP传输数据///////////////////////////////////////////////
 const HPACKHuffman码长 = [
 	13, 23, 28, 28, 28, 28, 28, 28, 28, 24, 30, 28, 28, 30, 28, 28,
@@ -1290,6 +1867,12 @@ function 解码WS早期数据(header, token) {
 async function 处理WS请求(request, yourUUID, url, 反代上下文 = {}) {
 	const WS套接字对 = new WebSocketPair();
 	const [clientSock, serverSock] = Object.values(WS套接字对);
+	const 监控上下文 = 请求监控上下文表.get(request) || null;
+	if (监控上下文) {
+		监控上下文.kind = 'ws';
+		监控上下文.status = 101;
+		WebSocket监控上下文表.set(serverSock, 监控上下文);
+	}
 	try { (/** @type {any} */ (serverSock)).accept({ allowHalfOpen: true }) }
 	catch (_) { serverSock.accept() }
 	serverSock.binaryType = 'arraybuffer';
@@ -1709,6 +2292,7 @@ async function 处理WS请求(request, yourUUID, url, 反代上下文 = {}) {
 	const 处理WS显式传输错误 = (err) => {
 		if (WS显式传输失败) return;
 		WS显式传输失败 = true;
+		完成请求监控(监控上下文, 'error');
 		WS显式传输停止接收 = true;
 		WS显式队列字节 = 0;
 		WS显式队列条目 = 0;
@@ -1733,6 +2317,7 @@ async function 处理WS请求(request, yourUUID, url, 反代上下文 = {}) {
 	const 入队WS显式传输 = (data) => {
 		if (WS显式传输停止接收 || WS显式传输失败) return;
 		const chunkSize = Math.max(0, 有效数据长度(data));
+		记录监控上行(监控上下文, chunkSize);
 		const nextBytes = WS显式队列字节 + chunkSize;
 		const nextItems = WS显式队列条目 + 1;
 		if (nextBytes > 上行队列最大字节 || nextItems > 上行队列最大条目) {
@@ -1768,8 +2353,10 @@ async function 处理WS请求(request, yourUUID, url, 反代上下文 = {}) {
 	serverSock.addEventListener('close', () => {
 		closeSocketQuietly(serverSock);
 		收尾WS显式传输();
+		完成请求监控(监控上下文, 'success');
 	});
 	serverSock.addEventListener('error', (err) => {
+		完成请求监控(监控上下文, 'error');
 		处理WS显式传输错误(err);
 	});
 
@@ -2518,6 +3105,8 @@ function formatIdentifier(arr, offset = 0) {
 }
 
 async function WebSocket发送并等待(webSocket, payload) {
+	const 监控上下文 = WebSocket监控上下文表.get(webSocket);
+	记录监控下行(监控上下文, 监控字节长度(payload));
 	const sendResult = webSocket.send(payload);
 	if (sendResult && typeof sendResult.then === 'function') await sendResult;
 }
@@ -5683,6 +6272,22 @@ async function 读取config_JSON(env, hostname, userID, UA = "Mozilla/5.0", 重�
 				total: 0,
 				max: 100000,
 			},
+		},
+		监控: {
+			启用: true,
+			保留天数: 7,
+			刷新秒: 5,
+			GitHub归档: {
+				启用: true,
+				仓库: 'hhhaiai/Picture',
+				分支: 'main',
+				服务名: 'mysimivv',
+				路径: 'data',
+				本地保留小时: 6,
+				最大本地字节: 2 * 1024 * 1024,
+				单文件字节: 512 * 1024,
+				检查分钟: 5,
+			},
 		}
 	};
 
@@ -5718,6 +6323,7 @@ async function 读取config_JSON(env, hostname, userID, UA = "Mozilla/5.0", 重�
 
 	if (!config_JSON.gRPC模式) config_JSON.gRPC模式 = 'gun';
 	if (!config_JSON.SS) config_JSON.SS = { 加密方式: "aes-128-gcm", TLS: false };
+	config_JSON.监控 = 标准化监控配置(config_JSON.监控);
 
 	if (!config_JSON.反代.路径模板?.[_p]) {
 		config_JSON.反代.路径模板 = {
