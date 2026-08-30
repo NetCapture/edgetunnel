@@ -11,6 +11,23 @@
 
 ---
 
+## 🧭 本分支维护入口
+
+本地 AI、异常归档、动态出口和生产维护规则：
+
+- [本地 AI 固定规则](./AGENT.md)
+- [运维文档索引](./docs/README.md)
+- [AI 异常维护规则](./docs/AI_MAINTENANCE_RUNBOOK.md)
+- [动态出口实现与验收记录](./docs/2026-08-30_architecture-edgetunnel-dynamic-egress-report.md)
+
+线上长期数据索引：
+
+```text
+https://raw.githubusercontent.com/hhhaiai/Picture/main/data/mysimivv/index.json
+```
+
+---
+
 ## 📖 项目简介
 
 **edgetunnel** 是一个基于 CF Workers/Pages 平台的边缘计算隧道解密方案。它能够高效地处理网络流量，并提供强大的管理面板和灵活的节点配置能力。
