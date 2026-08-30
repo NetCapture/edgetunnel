@@ -56,13 +56,24 @@ test('后台监控同时保留用户维度并增加 IP 节点维度', () => {
   const nodeEnhancement = 构建节点监控增强注入();
   assert.match(nodeEnhancement, /data-mode="nodes"/);
   assert.match(nodeEnhancement, /IP节点/);
+  assert.match(nodeEnhancement, /请求趋势/);
+  assert.match(nodeEnhancement, /流量趋势/);
+  assert.match(nodeEnhancement, /表格/);
+  assert.match(nodeEnhancement, /id="lmNodeCanvas"/);
   assert.match(nodeEnhancement, /id="lmNodeRows"/);
   assert.match(nodeEnhancement, /data\.nodes/);
+  assert.match(nodeEnhancement, /data\.nodeSeries/);
+  assert.match(nodeEnhancement, /总计/);
+  assert.match(nodeEnhancement, /content\.style\.display='block'/);
 
   const standalone = 轻量监控面板HTML();
   assert.match(standalone, /入口 IP\/节点流量/);
+  assert.match(standalone, /id="nodeTrendCanvas"/);
+  assert.match(standalone, /请求趋势/);
+  assert.match(standalone, /流量趋势/);
   assert.match(standalone, /id="nodeRows"/);
   assert.match(standalone, /data\.nodes/);
+  assert.match(standalone, /data\.nodeSeries/);
 });
 
 test('D1 迁移包含节点维度字段与时间索引', async () => {
@@ -71,4 +82,7 @@ test('D1 迁移包含节点维度字段与时间索引', async () => {
   assert.match(migration, /ADD COLUMN node_port INTEGER/i);
   assert.match(migration, /ADD COLUMN node_group TEXT/i);
   assert.match(migration, /node_ip, node_port, ts/i);
+
+  const trendMigration = await readFile(new URL('../monitoring-migration-0004.sql', import.meta.url), 'utf8');
+  assert.match(trendMigration, /ts, node_ip, node_port/i);
 });

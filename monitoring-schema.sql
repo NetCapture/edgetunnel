@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS monitor_events (
 CREATE INDEX IF NOT EXISTS idx_monitor_node_ts
 ON monitor_events(node_ip, node_port, ts);
 
+CREATE INDEX IF NOT EXISTS idx_monitor_ts_node
+ON monitor_events(ts, node_ip, node_port);
+
 CREATE TABLE IF NOT EXISTS monitor_archive_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     last_check_ts INTEGER NOT NULL DEFAULT 0,
