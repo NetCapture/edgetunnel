@@ -303,7 +303,12 @@ async function 处理主请求(request, env, ctx) {
 						return new Response(JSON.stringify(config_JSON, null, 2), { status: 200, headers: { 'Content-Type': 'application/json' } });
 					} else if (区分大小写访问路径 === 'admin/ADD.txt') {// 处理 admin/ADD.txt 请求，返回本地优选IP
 						let 本地优选IP = await env.KV.get('ADD.txt') || 'null';
-						if (本地优选IP == 'null') 本地优选IP = (await 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口))[1];
+						if (本地优选IP == 'null') {
+							const 自适应配置 = 标准化自适应订阅配置(config_JSON.优选订阅生成?.自适应);
+							本地优选IP = (自适应配置.启用
+								? await 生成自适应IP(request, { ...自适应配置, 指定端口: config_JSON.优选订阅生成.本地IP库.指定端口 })
+								: await 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口))[1];
+						}
 						return new Response(本地优选IP, { status: 200, headers: { 'Content-Type': 'text/plain;charset=utf-8', 'asn': request.cf.asn } });
 					} else if (访问路径 === 'admin/cf.json') {// CF配置文件
 						return new Response(JSON.stringify(request.cf, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
@@ -369,11 +374,17 @@ async function 处理主请求(request, env, ctx) {
 							let 完整优选IP = [], 其他节点LINK = '', 反代IP池 = [];
 
 							if (!url.searchParams.has('sub') && config_JSON.优选订阅生成.local) { // 本地生成订阅
-								const 完整优选列表 = config_JSON.优选订阅生成.本地IP库.随机IP ? (
-									await 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口)
-								)[0] : await env.KV.get('ADD.txt') ? await 整理成数组(await env.KV.get('ADD.txt')) : (
-									await 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口)
-								)[0];
+								const 自适应参数 = String(url.searchParams.get('adaptive') || '').toLowerCase();
+								const 自适应配置 = 标准化自适应订阅配置(config_JSON.优选订阅生成.自适应);
+								const 启用自适应 = 自适应参数
+									? !['0', 'false', 'off', 'no'].includes(自适应参数)
+									: 自适应配置.启用;
+								const 生成自动IP = async () => (启用自适应
+									? 生成自适应IP(request, { ...自适应配置, 指定端口: config_JSON.优选订阅生成.本地IP库.指定端口 })
+									: 生成随机IP(request, config_JSON.优选订阅生成.本地IP库.随机数量, config_JSON.优选订阅生成.本地IP库.指定端口));
+								const 自定义优选IP = config_JSON.优选订阅生成.本地IP库.随机IP ? null : await env.KV.get('ADD.txt');
+								const 完整优选列表 = 自定义优选IP ? await 整理成数组(自定义优选IP) : (await 生成自动IP())[0];
+								responseHeaders['X-EdgeTunnel-Adaptive'] = 启用自适应 ? '1' : '0';
 								const 优选API = [], 优选IP = [], 其他节点 = [];
 								for (const 元素 of 完整优选列表) {
 									if (元素.toLowerCase().startsWith('sub://')) {
@@ -407,6 +418,7 @@ async function 处理主请求(request, env, ctx) {
 								const 优选API的IP = 请求优选API内容[0];
 								反代IP池 = 请求优选API内容[3] || [];
 								完整优选IP = [...new Set(优选IP.concat(优选API的IP))];
+								responseHeaders['X-EdgeTunnel-Node-Count'] = String(完整优选IP.length);
 							} else { // 优选订阅生成器
 								let 优选订阅生成器HOST = url.searchParams.get('sub') || config_JSON.优选订阅生成.SUB;
 								const [优选生成器IP数组, 优选生成器其他节点] = await 获取优选订阅生成器数据(优选订阅生成器HOST);
@@ -461,16 +473,22 @@ async function 处理主请求(request, env, ctx) {
 										const NOTLS端口 = [80, 2052, 2082, 2086, 2095, 8080];
 										节点端口 = String(NOTLS端口[TLS端口.indexOf(Number(节点端口))] ?? 节点端口);
 									}
+									完整节点路径 = 添加节点监控路径(完整节点路径, { address: 节点地址, port: 节点端口, group: 节点备注 });
 									完整节点路径 = (完整节点路径.includes('?') ? 完整节点路径.replace('?', '?enc=' + config_JSON.SS.加密方式 + '&') : (完整节点路径 + '?enc=' + config_JSON.SS.加密方式)).replace(/([=,])/g, '\\$1');
 									if (!isSubConverterRequest) 完整节点路径 = 完整节点路径 + ';mux=0';
 									return `${协议类型}://${btoa(config_JSON.SS.加密方式 + ':00000000-0000-4000-8000-000000000000')}@${节点地址}:${节点端口}?plugin=v2${encodeURIComponent('ray-plugin;mode=websocket;host=example.com;path=' + (config_JSON.随机路径 ? 随机路径(完整节点路径) : 完整节点路径) + (config_JSON.SS.TLS ? ';tls' : '')) + ECHLINK参数 + TLS分片参数}#${encodeURIComponent(节点备注)}`;
 								} else {
+									if (!作为优选订阅生成器) 完整节点路径 = 添加节点监控路径(完整节点路径, { address: 节点地址, port: 节点端口, group: 节点备注 });
 									const 传输路径参数值 = 获取传输路径参数值(config_JSON, 完整节点路径, 作为优选订阅生成器);
 									return `${协议类型}://00000000-0000-4000-8000-000000000000@${节点地址}:${节点端口}?security=tls&type=${传输协议 + ECHLINK参数}&${域名字段名}=example.com&fp=${config_JSON.Fingerprint}&sni=example.com&${路径字段名}=${encodeURIComponent(传输路径参数值) + TLS分片参数}&encryption=none#${encodeURIComponent(节点备注)}`;
 								}
 							}).filter(item => item !== null).join('\n');
 						} else { // 订阅转换
-							const 订阅转换URL = `${config_JSON.订阅转换配置.SUBAPI}/sub?target=${订阅类型}&url=${encodeURIComponent(url.protocol + '//' + url.host + '/sub?target=mixed&token=' + 今日订阅转换后端专属TOKEN + '&cnIspCode=' + 识别运营商(request) + (url.searchParams.has('sub') && url.searchParams.get('sub') != '' ? `&sub=${url.searchParams.get('sub')}` : ''))}&config=${encodeURIComponent(config_JSON.订阅转换配置.SUBCONFIG)}&emoji=${config_JSON.订阅转换配置.SUBEMOJI}&list=${config_JSON.订阅转换配置.SUBLIST}&scv=${config_JSON.跳过证书验证}&xudp=${config_JSON.订阅转换配置.XUDP}&udp=${config_JSON.订阅转换配置.UDP}&tls13=${config_JSON.订阅转换配置.TLS13}&append_type=${config_JSON.订阅转换配置.APPEND_TYPE}&sort=${config_JSON.订阅转换配置.SORT}`;
+							const 自适应透传参数 = ['adaptive', 'nodes', 'nodeCount']
+								.filter(name => url.searchParams.has(name))
+								.map(name => `&${name}=${encodeURIComponent(url.searchParams.get(name))}`)
+								.join('');
+							const 订阅转换URL = `${config_JSON.订阅转换配置.SUBAPI}/sub?target=${订阅类型}&url=${encodeURIComponent(url.protocol + '//' + url.host + '/sub?target=mixed&token=' + 今日订阅转换后端专属TOKEN + '&cnIspCode=' + 识别运营商(request) + 自适应透传参数 + (url.searchParams.has('sub') && url.searchParams.get('sub') != '' ? `&sub=${url.searchParams.get('sub')}` : ''))}&config=${encodeURIComponent(config_JSON.订阅转换配置.SUBCONFIG)}&emoji=${config_JSON.订阅转换配置.SUBEMOJI}&list=${config_JSON.订阅转换配置.SUBLIST}&scv=${config_JSON.跳过证书验证}&xudp=${config_JSON.订阅转换配置.XUDP}&udp=${config_JSON.订阅转换配置.UDP}&tls13=${config_JSON.订阅转换配置.TLS13}&append_type=${config_JSON.订阅转换配置.APPEND_TYPE}&sort=${config_JSON.订阅转换配置.SORT}`;
 							try {
 								const response = await fetch(订阅转换URL, { headers: { 'User-Agent': 'Subconverter for ' + 订阅类型 + ' edge' + 'tunnel (https://github.com/' + 特征码字典[1] + '/edge' + 'tunnel)' } });
 								if (response.ok) {
@@ -624,6 +642,43 @@ function 识别监控类型(request) {
 	return 'web';
 }
 
+function 编码节点监控标识(value = {}) {
+	const address = String(value.address || value.ip || '').trim().slice(0, 96);
+	const port = Math.min(65535, Math.max(0, Math.floor(Number(value.port) || 0)));
+	const group = String(value.group || '').replace(/[|\r\n<>&"'`\\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 32);
+	if (!address || !port || !/^[a-zA-Z0-9.:[\]_-]+$/.test(address)) return '';
+	return 监控字节转Base64(new TextEncoder().encode(`${address}|${port}|${group}`))
+		.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function 添加节点监控路径(path, value = {}) {
+	const marker = 编码节点监控标识(value);
+	const original = String(path || '/');
+	if (!marker || /\/__etn\/[A-Za-z0-9_-]+(?:\/|$)/.test(original)) return original;
+	const queryIndex = original.indexOf('?');
+	const pathname = (queryIndex >= 0 ? original.slice(0, queryIndex) : original) || '/';
+	const query = queryIndex >= 0 ? original.slice(queryIndex) : '';
+	const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+	return `/__etn/${marker}${normalizedPath}${query}`;
+}
+
+function 解析节点监控标识(request) {
+	const empty = { id: '', ip: '', port: 0, group: '' };
+	try {
+		const pathname = new URL(request.url).pathname;
+		const match = pathname.match(/\/__etn\/([A-Za-z0-9_-]{8,256})(?:\/|$)/);
+		if (!match) return empty;
+		const normalized = match[1].replace(/-/g, '+').replace(/_/g, '/');
+		const text = Base64转监控文本(normalized + '='.repeat((4 - normalized.length % 4) % 4));
+		const [ip, portText, ...groupParts] = text.split('|');
+		const port = Number(portText), group = groupParts.join('|').slice(0, 64);
+		if (!ip || !/^[a-zA-Z0-9.:[\]_-]{1,96}$/.test(ip) || !Number.isInteger(port) || port < 1 || port > 65535) return empty;
+		return { id: `${ip}:${port}`, ip, port, group };
+	} catch (_) {
+		return empty;
+	}
+}
+
 async function 生成监控用户标识(request, env) {
 	const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('True-Client-IP') || request.headers.get('X-Real-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
 	const salt = env.MONITOR_SALT || env.ADMIN || env.KEY || env.UUID || 'edgetunnel-monitor';
@@ -636,6 +691,7 @@ function 创建请求监控上下文(request, env, ctx) {
 	const config = 快速读取监控配置(env, ctx);
 	if (!config.启用) return { request, monitor: null };
 	const startedAt = Date.now();
+	const node = 解析节点监控标识(request);
 	const monitor = {
 		env, ctx, config, startedAt,
 		userHash: null,
@@ -654,6 +710,10 @@ function 创建请求监控上下文(request, env, ctx) {
 		checkpointScheduled: false,
 		country: request.cf?.country || 'N/A',
 		colo: request.cf?.colo || 'N/A',
+		nodeId: node.id,
+		nodeIP: node.ip,
+		nodePort: node.port,
+		nodeGroup: node.group,
 		finished: false,
 	};
 	let monitoredRequest = request;
@@ -705,12 +765,13 @@ function 提交监控快照(monitor, outcome = 'active', final = false) {
 		if (!monitor.userHash) monitor.userHash = await monitor.userHashPromise;
 		await monitor.env.MONITOR_DB.prepare(`
 			INSERT INTO monitor_events
-			(ts, minute, user_hash, kind, method, request_count, status, outcome, bytes_up, bytes_down, duration_ms, country, colo)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(ts, minute, user_hash, kind, method, request_count, status, outcome, bytes_up, bytes_down, duration_ms, country, colo, node_ip, node_port, node_group)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`).bind(
 			finishedAt, minute, monitor.userHash, monitor.kind, monitor.method, requestCount,
 			monitor.status, outcome, bytesUp, bytesDown,
-			Math.max(0, finishedAt - monitor.startedAt), monitor.country, monitor.colo
+			Math.max(0, finishedAt - monitor.startedAt), monitor.country, monitor.colo,
+			monitor.nodeIP, monitor.nodePort, monitor.nodeGroup
 		).run();
 		monitor.flushedBytesUp += bytesUp;
 		monitor.flushedBytesDown += bytesDown;
@@ -806,11 +867,11 @@ async function 尝试自动归档监控数据(env, config, force = false) {
 	} else {
 		await env.MONITOR_DB.prepare('UPDATE monitor_archive_state SET last_check_ts = ? WHERE id = 1').bind(now).run();
 	}
-	const sizeRow = await env.MONITOR_DB.prepare(`SELECT COALESCE(SUM(160 + LENGTH(user_hash) + LENGTH(kind) + LENGTH(method) + LENGTH(outcome) + LENGTH(country) + LENGTH(colo)), 0) AS estimated_bytes, COUNT(*) AS rows FROM monitor_events`).first();
+	const sizeRow = await env.MONITOR_DB.prepare(`SELECT COALESCE(SUM(176 + LENGTH(user_hash) + LENGTH(kind) + LENGTH(method) + LENGTH(outcome) + LENGTH(country) + LENGTH(colo) + LENGTH(node_ip) + LENGTH(node_group)), 0) AS estimated_bytes, COUNT(*) AS rows FROM monitor_events`).first();
 	const estimatedBytes = 转换监控数值(sizeRow?.estimated_bytes);
 	const cutoff = now - archive.本地保留小时 * 3600000;
 	const overflow = estimatedBytes >= archive.最大本地字节;
-	const rowsResult = await env.MONITOR_DB.prepare(`SELECT id, ts, minute, user_hash, kind, method, request_count, status, outcome, bytes_up, bytes_down, duration_ms, country, colo
+	const rowsResult = await env.MONITOR_DB.prepare(`SELECT id, ts, minute, user_hash, kind, method, request_count, status, outcome, bytes_up, bytes_down, duration_ms, country, colo, node_ip, node_port, node_group
 		FROM monitor_events WHERE ts < ? OR ? = 1 ORDER BY id ASC LIMIT 2000`).bind(cutoff, force || overflow ? 1 : 0).all();
 	const candidates = rowsResult?.results || [];
 	if (!candidates.length) return { success: true, archived: false, estimatedBytes };
@@ -818,9 +879,10 @@ async function 尝试自动归档监控数据(env, config, force = false) {
 	let payloadBytes = 0;
 	for (const row of candidates) {
 		const line = JSON.stringify({
-			v: 1, id: row.id, ts: row.ts, minute: row.minute, user: row.user_hash, kind: row.kind, method: row.method,
+			v: 2, id: row.id, ts: row.ts, minute: row.minute, user: row.user_hash, kind: row.kind, method: row.method,
 			requests: row.request_count, status: row.status, outcome: row.outcome, up: row.bytes_up, down: row.bytes_down,
 			duration: row.duration_ms, country: row.country, colo: row.colo,
+			node: row.node_ip ? { ip: row.node_ip, port: row.node_port, group: row.node_group } : null,
 		}) + '\n';
 		const lineBytes = new TextEncoder().encode(line).byteLength;
 		if (selected.length && payloadBytes + lineBytes > archive.单文件字节) break;
@@ -959,6 +1021,7 @@ async function 获取轻量监控指标响应(env, ctx) {
 		const startMs = start.getTime(), recentStart = now - 5 * 60 * 1000, seriesStart = now - 60 * 60 * 1000;
 		const results = await env.MONITOR_DB.batch([
 			env.MONITOR_DB.prepare(`SELECT COALESCE(SUM(request_count), 0) AS requests, COUNT(DISTINCT user_hash) AS users,
+				COUNT(DISTINCT CASE WHEN node_ip <> '' THEN node_ip || ':' || node_port END) AS nodes,
 				COALESCE(SUM(bytes_up), 0) AS bytes_up, COALESCE(SUM(bytes_down), 0) AS bytes_down,
 				COALESCE(SUM(CASE WHEN outcome = 'error' OR status >= 500 THEN 1 ELSE 0 END), 0) AS errors
 				FROM monitor_events WHERE ts >= ?`).bind(startMs),
@@ -982,14 +1045,25 @@ async function 获取轻量监控指标响应(env, ctx) {
 				COALESCE(SUM(bytes_down), 0) AS bytes_down,
 				COALESCE(SUM(CASE WHEN outcome = 'error' OR status >= 500 THEN 1 ELSE 0 END), 0) AS errors
 				FROM monitor_events WHERE ts >= ? GROUP BY bucket ORDER BY bucket ASC`).bind(recentStart),
+			env.MONITOR_DB.prepare(`SELECT node_ip, node_port, node_group,
+				COALESCE(SUM(request_count), 0) AS requests,
+				COUNT(DISTINCT user_hash) AS users,
+				COALESCE(SUM(bytes_up), 0) AS bytes_up,
+				COALESCE(SUM(bytes_down), 0) AS bytes_down,
+				COALESCE(SUM(CASE WHEN outcome = 'error' OR status >= 500 THEN 1 ELSE 0 END), 0) AS errors,
+				MAX(ts) AS last_seen
+				FROM monitor_events WHERE ts >= ? AND node_ip <> ''
+				GROUP BY node_ip, node_port, node_group
+				ORDER BY (COALESCE(SUM(bytes_up), 0) + COALESCE(SUM(bytes_down), 0)) DESC LIMIT 40`).bind(startMs),
 			env.MONITOR_DB.prepare('SELECT * FROM monitor_archive_state WHERE id = 1'),
-			env.MONITOR_DB.prepare(`SELECT COALESCE(SUM(160 + LENGTH(user_hash) + LENGTH(kind) + LENGTH(method) + LENGTH(outcome) + LENGTH(country) + LENGTH(colo)), 0) AS estimated_bytes,
+			env.MONITOR_DB.prepare(`SELECT COALESCE(SUM(176 + LENGTH(user_hash) + LENGTH(kind) + LENGTH(method) + LENGTH(outcome) + LENGTH(country) + LENGTH(colo) + LENGTH(node_ip) + LENGTH(node_group)), 0) AS estimated_bytes,
 				COUNT(*) AS event_rows FROM monitor_events`),
 		]);
 		const summaryRow = 读取D1结果首行(results[0]);
 		const recentRow = 读取D1结果首行(results[1]);
 		const summary = {
 			users: 转换监控数值(summaryRow.users),
+			nodes: 转换监控数值(summaryRow.nodes),
 			requests: 转换监控数值(summaryRow.requests),
 			bytesUp: 转换监控数值(summaryRow.bytes_up),
 			bytesDown: 转换监控数值(summaryRow.bytes_down),
@@ -1022,8 +1096,15 @@ async function 获取轻量监控指标响应(env, ctx) {
 			bucket: 转换监控数值(row.bucket), requests: 转换监控数值(row.requests),
 			bytesUp: 转换监控数值(row.bytes_up), bytesDown: 转换监控数值(row.bytes_down), errors: 转换监控数值(row.errors),
 		}));
-		const archiveState = 读取D1结果首行(results[6]);
-		const localState = 读取D1结果首行(results[7]);
+		const nodes = (results[6]?.results || []).map(row => ({
+			id: `${String(row.node_ip || '')}:${转换监控数值(row.node_port)}`,
+			ip: String(row.node_ip || ''), port: 转换监控数值(row.node_port), group: String(row.node_group || ''),
+			requests: 转换监控数值(row.requests), users: 转换监控数值(row.users),
+			bytesUp: 转换监控数值(row.bytes_up), bytesDown: 转换监控数值(row.bytes_down),
+			errors: 转换监控数值(row.errors), lastSeen: 转换监控数值(row.last_seen),
+		}));
+		const archiveState = 读取D1结果首行(results[7]);
+		const localState = 读取D1结果首行(results[8]);
 		const archive = {
 			enabled: config.GitHub归档.启用,
 			configured: Boolean(env.GITHUB_MONITOR_TOKEN),
@@ -1041,7 +1122,7 @@ async function 获取轻量监控指标响应(env, ctx) {
 		};
 		const cleanup = env.MONITOR_DB.prepare('DELETE FROM monitor_events WHERE ts < ?').bind(now - config.保留天数 * 86400000).run().catch(error => console.error(`清理监控数据失败: ${error.message}`));
 		try { ctx?.waitUntil(cleanup) } catch (_) { }
-		return new Response(JSON.stringify({ success: true, enabled: config.启用, updatedAt: now, windowStart: startMs, refreshSeconds: config.刷新秒, precisionMs: 5000, summary, speed, users, series, realtimeSeries, byKind, archive }), {
+		return new Response(JSON.stringify({ success: true, enabled: config.启用, updatedAt: now, windowStart: startMs, refreshSeconds: config.刷新秒, precisionMs: 5000, summary, speed, users, nodes, series, realtimeSeries, byKind, archive }), {
 			status: 200,
 			headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' }
 		});
@@ -1052,11 +1133,11 @@ async function 获取轻量监控指标响应(env, ctx) {
 
 function 轻量监控面板HTML() {
 	return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>轻量监控 - edgetunnel</title><style>
-	:root{color-scheme:light dark;--bg:#f5f7fb;--card:#fff;--text:#172033;--muted:#6b7280;--line:#e5e7eb;--orange:#f6821f;--blue:#2563eb;--green:#10b981;--red:#ef4444}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.wrap{max-width:1180px;margin:auto;padding:24px}.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}.top h1{font-size:24px;margin:0}.btn{border:0;border-radius:10px;padding:10px 14px;background:var(--orange);color:#fff;text-decoration:none;font-weight:700;cursor:pointer}.status{font-size:13px;color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card,.panel{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 24px rgba(15,23,42,.05)}.card{padding:18px}.label{font-size:13px;color:var(--muted);margin-bottom:8px}.value{font-size:25px;font-weight:800;word-break:break-word}.panels{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.panel{padding:18px;overflow:auto}.panel h2{font-size:16px;margin:0 0 14px}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:10px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--muted)}.bar-row{display:grid;grid-template-columns:70px 1fr 80px;gap:10px;align-items:center;margin:10px 0;font-size:13px}.bar{height:10px;border-radius:999px;background:#e5e7eb;overflow:hidden}.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--orange),#faab41);border-radius:inherit}.empty{color:var(--muted);padding:20px;text-align:center}.off{color:var(--red);font-weight:700}@media(max-width:800px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.panels{grid-template-columns:1fr}.wrap{padding:14px}}@media(prefers-color-scheme:dark){:root{--bg:#111318;--card:#1a1d24;--text:#f4f4f5;--muted:#a1a1aa;--line:#30343d}}
+	:root{color-scheme:light dark;--bg:#f5f7fb;--card:#fff;--text:#172033;--muted:#6b7280;--line:#e5e7eb;--orange:#f6821f;--blue:#2563eb;--green:#10b981;--red:#ef4444}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.wrap{max-width:1180px;margin:auto;padding:24px}.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}.top h1{font-size:24px;margin:0}.btn{border:0;border-radius:10px;padding:10px 14px;background:var(--orange);color:#fff;text-decoration:none;font-weight:700;cursor:pointer}.status{font-size:13px;color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card,.panel{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 24px rgba(15,23,42,.05)}.card{padding:18px}.label{font-size:13px;color:var(--muted);margin-bottom:8px}.value{font-size:25px;font-weight:800;word-break:break-word}.panels{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.panel{padding:18px;overflow:auto}.panel-wide{grid-column:1/-1}.panel h2{font-size:16px;margin:0 0 14px}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:10px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--muted)}.bar-row{display:grid;grid-template-columns:70px 1fr 80px;gap:10px;align-items:center;margin:10px 0;font-size:13px}.bar{height:10px;border-radius:999px;background:#e5e7eb;overflow:hidden}.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--orange),#faab41);border-radius:inherit}.empty{color:var(--muted);padding:20px;text-align:center}.off{color:var(--red);font-weight:700}@media(max-width:800px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.panels{grid-template-columns:1fr}.wrap{padding:14px}}@media(prefers-color-scheme:dark){:root{--bg:#111318;--card:#1a1d24;--text:#f4f4f5;--muted:#a1a1aa;--line:#30343d}}
 	</style></head><body><main class="wrap"><div class="top"><div><h1>📊 站点轻量监控</h1><div class="status" id="status">正在加载...</div></div><a class="btn" href="/admin">返回后台</a></div>
 	<section class="grid"><div class="card"><div class="label">今日用户</div><div class="value" id="users">-</div></div><div class="card"><div class="label">今日请求</div><div class="value" id="requests">-</div></div><div class="card"><div class="label">请求速度（5分钟）</div><div class="value" id="rpm">-</div></div><div class="card"><div class="label">平均带宽（5分钟）</div><div class="value" id="mbps">-</div></div><div class="card"><div class="label">总上行</div><div class="value" id="up">-</div></div><div class="card"><div class="label">总下行</div><div class="value" id="down">-</div></div><div class="card"><div class="label">总流量</div><div class="value" id="total">-</div></div><div class="card"><div class="label">人均流量 / 请求</div><div class="value" id="average">-</div></div></section>
-	<section class="panels"><div class="panel"><h2>协议分布</h2><div id="kinds"></div></div><div class="panel"><h2>匿名用户 Top 20</h2><table><thead><tr><th>用户</th><th>请求</th><th>上行</th><th>下行</th><th>最后访问</th></tr></thead><tbody id="userRows"></tbody></table></div></section></main><script>
-	(function(){var timer=null;function num(v,d){return Number(v||0).toLocaleString(undefined,{maximumFractionDigits:d===undefined?2:d})}function bytes(v){v=Number(v||0);var u=['B','KB','MB','GB','TB'],i=0;while(v>=1024&&i<u.length-1){v/=1024;i++}return num(v,i?2:0)+' '+u[i]}function put(id,value){document.getElementById(id).textContent=value}function render(data){if(!data.success)throw new Error(data.error||'加载失败');var s=data.summary||{},sp=data.speed||{};put('users',num(s.users,0));put('requests',num(s.requests,0));put('rpm',num(sp.requestsPerMinute,2)+' req/min');put('mbps',num(sp.megabitsPerSecond,3)+' Mbps');put('up',bytes(s.bytesUp));put('down',bytes(s.bytesDown));put('total',bytes(s.bytesTotal));put('average',bytes(s.averageBytesPerUser)+' / '+num(s.averageRequestsPerUser,1));var status=document.getElementById('status');status.innerHTML=(data.enabled?'监控已开启':'<span class="off">监控已关闭</span>')+' · 更新于 '+new Date(data.updatedAt).toLocaleString();var kinds=document.getElementById('kinds'),list=data.byKind||[],max=Math.max.apply(null,[1].concat(list.map(function(x){return x.requests})));kinds.innerHTML=list.length?list.map(function(x){var total=Number(x.bytesUp||0)+Number(x.bytesDown||0);return '<div class="bar-row"><span>'+x.kind+'</span><div class="bar"><i style="width:'+Math.max(2,x.requests/max*100)+'%"></i></div><span>'+num(x.requests,0)+' / '+bytes(total)+'</span></div>'}).join(''):'<div class="empty">暂无数据</div>';var rows=document.getElementById('userRows');rows.innerHTML=(data.users||[]).map(function(x){return '<tr><td><code>'+x.userHash+'</code></td><td>'+num(x.requests,0)+'</td><td>'+bytes(x.bytesUp)+'</td><td>'+bytes(x.bytesDown)+'</td><td>'+new Date(x.lastSeen).toLocaleTimeString()+'</td></tr>'}).join('')||'<tr><td colspan="5" class="empty">暂无数据</td></tr>';if(timer)clearTimeout(timer);timer=setTimeout(load,Math.max(10,Number(data.refreshSeconds||30))*1000)}async function load(){try{var r=await fetch('/admin/metrics.json',{cache:'no-store'});render(await r.json())}catch(e){document.getElementById('status').textContent='加载失败：'+e.message;if(timer)clearTimeout(timer);timer=setTimeout(load,30000)}}load()})();
+	<section class="panels"><div class="panel"><h2>协议分布</h2><div id="kinds"></div></div><div class="panel"><h2>匿名用户 Top 20</h2><table><thead><tr><th>用户</th><th>请求</th><th>上行</th><th>下行</th><th>最后访问</th></tr></thead><tbody id="userRows"></tbody></table></div><div class="panel panel-wide"><h2>入口 IP/节点流量</h2><table><thead><tr><th>入口 IP</th><th>端口</th><th>分组</th><th>用户</th><th>请求</th><th>上行</th><th>下行</th><th>错误</th><th>最后访问</th></tr></thead><tbody id="nodeRows"></tbody></table></div></section></main><script>
+	(function(){var timer=null;function num(v,d){return Number(v||0).toLocaleString(undefined,{maximumFractionDigits:d===undefined?2:d})}function bytes(v){v=Number(v||0);var u=['B','KB','MB','GB','TB'],i=0;while(v>=1024&&i<u.length-1){v/=1024;i++}return num(v,i?2:0)+' '+u[i]}function put(id,value){document.getElementById(id).textContent=value}function render(data){if(!data.success)throw new Error(data.error||'加载失败');var s=data.summary||{},sp=data.speed||{};put('users',num(s.users,0));put('requests',num(s.requests,0));put('rpm',num(sp.requestsPerMinute,2)+' req/min');put('mbps',num(sp.megabitsPerSecond,3)+' Mbps');put('up',bytes(s.bytesUp));put('down',bytes(s.bytesDown));put('total',bytes(s.bytesTotal));put('average',bytes(s.averageBytesPerUser)+' / '+num(s.averageRequestsPerUser,1));var status=document.getElementById('status');status.innerHTML=(data.enabled?'监控已开启':'<span class="off">监控已关闭</span>')+' · 更新于 '+new Date(data.updatedAt).toLocaleString();var kinds=document.getElementById('kinds'),list=data.byKind||[],max=Math.max.apply(null,[1].concat(list.map(function(x){return x.requests})));kinds.innerHTML=list.length?list.map(function(x){var total=Number(x.bytesUp||0)+Number(x.bytesDown||0);return '<div class="bar-row"><span>'+x.kind+'</span><div class="bar"><i style="width:'+Math.max(2,x.requests/max*100)+'%"></i></div><span>'+num(x.requests,0)+' / '+bytes(total)+'</span></div>'}).join(''):'<div class="empty">暂无数据</div>';var rows=document.getElementById('userRows');rows.innerHTML=(data.users||[]).map(function(x){return '<tr><td><code>'+x.userHash+'</code></td><td>'+num(x.requests,0)+'</td><td>'+bytes(x.bytesUp)+'</td><td>'+bytes(x.bytesDown)+'</td><td>'+new Date(x.lastSeen).toLocaleTimeString()+'</td></tr>'}).join('')||'<tr><td colspan="5" class="empty">暂无数据</td></tr>';var nodeRows=document.getElementById('nodeRows');nodeRows.innerHTML=(data.nodes||[]).map(function(x){return '<tr><td><code>'+x.ip+'</code></td><td>'+x.port+'</td><td>'+x.group+'</td><td>'+num(x.users,0)+'</td><td>'+num(x.requests,0)+'</td><td>'+bytes(x.bytesUp)+'</td><td>'+bytes(x.bytesDown)+'</td><td>'+num(x.errors,0)+'</td><td>'+new Date(x.lastSeen).toLocaleTimeString()+'</td></tr>'}).join('')||'<tr><td colspan="9" class="empty">暂无带节点标识的新连接</td></tr>';if(timer)clearTimeout(timer);timer=setTimeout(load,Math.max(10,Number(data.refreshSeconds||30))*1000)}async function load(){try{var r=await fetch('/admin/metrics.json',{cache:'no-store'});render(await r.json())}catch(e){document.getElementById('status').textContent='加载失败：'+e.message;if(timer)clearTimeout(timer);timer=setTimeout(load,30000)}}load()})();
 	</script></body></html>`;
 }
 
@@ -1144,6 +1225,19 @@ function 构建高精度实时监控注入() {
 	</script>`;
 }
 
+function 构建节点监控增强注入() {
+	return `<style>
+	#lightMonitorModule #lmNodeView{display:none;overflow:auto;border:1px solid #e5e7eb;border-radius:14px}
+	#lightMonitorModule #lmNodeView table{width:100%;border-collapse:collapse;font-size:12px}
+	#lightMonitorModule #lmNodeView th,#lightMonitorModule #lmNodeView td{padding:9px 10px;border-bottom:1px solid #e5e7eb;text-align:left;white-space:nowrap}
+	#lightMonitorModule #lmNodeView th{color:#6b7280}
+	html.dark-mode #lightMonitorModule #lmNodeView{background:#202127;border-color:#353740}
+	html.dark-mode #lightMonitorModule #lmNodeView th{color:#a1a1aa}
+	</style><script>
+	(function(){if(window.__edgetunnelNodeMonitorInstalled)return;window.__edgetunnelNodeMonitorInstalled=true;var active=false,timer=null;function number(value,digits){return Number(value||0).toLocaleString(undefined,{maximumFractionDigits:digits===undefined?2:digits})}function bytes(value){value=Number(value||0);var units=['B','KB','MB','GB','TB'],index=0;while(value>=1024&&index<units.length-1){value/=1024;index++}return number(value,index?2:0)+' '+units[index]}function render(data){var body=document.getElementById('lmNodeRows');if(!body)return;var nodes=(data&&data.nodes)||[],grand=Number(data&&data.summary&&data.summary.bytesTotal||0);body.innerHTML=nodes.slice(0,40).map(function(node){var total=Number(node.bytesUp||0)+Number(node.bytesDown||0),share=grand?total/grand*100:0;return '<tr><td><code>'+node.ip+'</code></td><td>'+node.port+'</td><td>'+node.group+'</td><td>'+number(node.users,0)+'</td><td>'+number(node.requests,0)+'</td><td>'+bytes(node.bytesUp)+'</td><td>'+bytes(node.bytesDown)+'</td><td>'+bytes(total)+'</td><td>'+number(share,1)+'%</td><td>'+number(node.errors,0)+'</td><td>'+new Date(node.lastSeen).toLocaleTimeString()+'</td></tr>'}).join('')||'<tr><td colspan="11">暂无带节点标识的新连接；客户端更新订阅并产生连接后显示</td></tr>'}async function load(){if(!active)return;try{var response=await fetch('/admin/metrics.json',{cache:'no-store'});render(await response.json())}catch(error){var body=document.getElementById('lmNodeRows');if(body)body.innerHTML='<tr><td colspan="11">加载失败：'+error.message+'</td></tr>'}finally{if(timer)clearTimeout(timer);timer=setTimeout(load,5000)}}function show(){active=true;document.querySelectorAll('#lightMonitorModule .lm-mode').forEach(function(item){item.classList.toggle('active',item.dataset.mode==='nodes')});var chart=document.getElementById('lmChartWrap'),users=document.getElementById('lmUserView'),nodes=document.getElementById('lmNodeView');if(chart)chart.style.display='none';if(users)users.style.display='none';if(nodes)nodes.style.display='block';load()}function install(){var module=document.getElementById('lightMonitorModule');if(!module)return false;if(document.getElementById('lmNodeView'))return true;var switches=module.querySelector('.lm-switches'),userView=document.getElementById('lmUserView');if(!switches||!userView||!userView.parentNode)return false;var button=document.createElement('button');button.type='button';button.className='lm-mode';button.dataset.mode='nodes';button.textContent='IP节点';button.addEventListener('click',show);switches.appendChild(button);var view=document.createElement('div');view.className='lm-user-view';view.id='lmNodeView';view.innerHTML='<table><thead><tr><th>入口 IP</th><th>端口</th><th>分组</th><th>用户</th><th>请求</th><th>上行</th><th>下行</th><th>总流量</th><th>占比</th><th>错误</th><th>最后访问</th></tr></thead><tbody id="lmNodeRows"></tbody></table>';userView.parentNode.insertBefore(view,userView.nextSibling);module.querySelectorAll('.lm-mode:not([data-mode="nodes"])').forEach(function(item){item.addEventListener('click',function(){active=false;view.style.display='none';if(timer)clearTimeout(timer)})});return true}function start(){if(install())return;var tries=0,wait=setInterval(function(){tries++;if(install()||tries>60)clearInterval(wait)},200)}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start()})();
+	</script>`;
+}
+
 function 构建轻量监控汇总模块注入() {
 	return `<style>
 	#lightMonitorModule{display:block}#lightMonitorModule .lm-title-left,#lightMonitorModule .lm-title-right{display:flex;align-items:center;gap:9px}#lightMonitorModule .lm-wave-icon{width:25px;height:25px;fill:none;stroke:#f6821f;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}#lightMonitorModule .lm-live{font-size:10px;letter-spacing:.12em;color:#10b981;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.28);padding:4px 7px;border-radius:999px}#lightMonitorModule .lm-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}#lightMonitorModule .lm-card{padding:14px;border:1px solid #e5e7eb;border-radius:12px;background:#fff;box-shadow:0 4px 14px rgba(15,23,42,.04)}#lightMonitorModule .lm-label{font-size:12px;color:#6b7280;margin-bottom:6px}#lightMonitorModule .lm-value{font-size:20px;font-weight:800;color:#1f2937;word-break:break-word}#lightMonitorModule .lm-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:8px 0 12px}#lightMonitorModule .lm-switches,#lightMonitorModule .lm-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}#lightMonitorModule .lm-mode,#lightMonitorModule .lm-btn{border:0;border-radius:9px;padding:8px 12px;font-weight:700;cursor:pointer;text-decoration:none;font-size:12px}#lightMonitorModule .lm-mode{background:#f3f4f6;color:#6b7280}#lightMonitorModule .lm-mode.active{background:linear-gradient(135deg,#f6821f,#faab41);color:#fff}#lightMonitorModule .lm-refresh{background:#eef2ff;color:#4338ca}#lightMonitorModule .lm-detail{background:#111827;color:#fff}#lightMonitorModule .lm-chart-wrap{height:230px;border:1px solid #e5e7eb;border-radius:14px;padding:10px;background:linear-gradient(180deg,rgba(59,130,246,.04),rgba(246,130,31,.02));position:relative}#lightMonitorModule #lmWaveCanvas{width:100%;height:100%;display:block}#lightMonitorModule .lm-user-view{display:none;overflow:auto;border:1px solid #e5e7eb;border-radius:14px}#lightMonitorModule .lm-user-view table{width:100%;border-collapse:collapse;font-size:12px}#lightMonitorModule .lm-user-view th,#lightMonitorModule .lm-user-view td{padding:9px 10px;border-bottom:1px solid #e5e7eb;text-align:left;white-space:nowrap}#lightMonitorModule .lm-user-view th{color:#6b7280}#lightMonitorModule .lm-status{font-size:12px;color:#6b7280;margin-top:9px}html.dark-mode #lightMonitorModule .lm-card,html.dark-mode #lightMonitorModule .lm-chart-wrap,html.dark-mode #lightMonitorModule .lm-user-view{background:#202127;border-color:#353740}html.dark-mode #lightMonitorModule .lm-value{color:#f4f4f5}html.dark-mode #lightMonitorModule .lm-label,html.dark-mode #lightMonitorModule .lm-status,html.dark-mode #lightMonitorModule .lm-user-view th{color:#a1a1aa}html.dark-mode #lightMonitorModule .lm-mode{background:#2b2d34;color:#b8b9c0}@media(max-width:760px){#lightMonitorModule .lm-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}#lightMonitorModule .lm-chart-wrap{height:190px}}
@@ -1165,7 +1259,7 @@ async function 注入轻量监控高级设置(response) {
 	headers.delete('Content-Length');
 	headers.delete('Content-Encoding');
 	headers.delete('ETag');
-	const output = 在HTML关闭Body前注入(html, 构建高精度实时监控注入() + 构建轻量监控汇总模块注入() + injection + 构建管理页面视觉优化注入());
+	const output = 在HTML关闭Body前注入(html, 构建高精度实时监控注入() + 构建节点监控增强注入() + 构建轻量监控汇总模块注入() + injection + 构建管理页面视觉优化注入());
 	return new Response(output, { status: response.status, statusText: response.statusText, headers });
 }
 
@@ -1175,7 +1269,7 @@ export default {
 	}
 };
 
-export { 标准化监控配置, 监控字节长度, 识别监控类型, 转换监控数值, 计算60分钟带宽统计, 在HTML关闭Body前注入, 构建高精度实时监控注入, 构建轻量监控汇总模块注入, 构建管理页面视觉优化注入 };
+export { 标准化监控配置, 监控字节长度, 识别监控类型, 转换监控数值, 计算60分钟带宽统计, 在HTML关闭Body前注入, 构建高精度实时监控注入, 构建节点监控增强注入, 构建轻量监控汇总模块注入, 构建管理页面视觉优化注入, 轻量监控面板HTML, 添加节点监控路径, 解析节点监控标识, 标准化自适应订阅配置, 构建自适应运营商配额, 生成自适应IP };
 ///////////////////////////////////////////////////////////////////////叉HTTP传输数据///////////////////////////////////////////////
 const HPACKHuffman码长 = [
 	13, 23, 28, 28, 28, 28, 28, 28, 28, 24, 30, 28, 28, 30, 28, 28,
@@ -6278,6 +6372,12 @@ async function 读取config_JSON(env, hostname, userID, UA = "Mozilla/5.0", 重�
 				随机数量: 16,
 				指定端口: -1,
 			},
+			自适应: {
+				启用: true,
+				节点数量: 20,
+				端口: [443, 2053, 2083, 2087, 2096, 8443],
+				轮换小时: 24,
+			},
 			SUB: null,
 			SUBNAME: "edge" + "tunnel",
 			SUBUpdateTime: 3, // 订阅更新时间（小时）
@@ -6383,6 +6483,9 @@ async function 读取config_JSON(env, hostname, userID, UA = "Mozilla/5.0", 重�
 	if (!config_JSON.订阅转换配置.APPEND_TYPE) config_JSON.订阅转换配置.APPEND_TYPE = false;
 	if (!config_JSON.订阅转换配置.SORT) config_JSON.订阅转换配置.SORT = false;
 	if (!config_JSON.gRPCUserAgent) config_JSON.gRPCUserAgent = UA;
+	if (!config_JSON.优选订阅生成) config_JSON.优选订阅生成 = 默认配置JSON.优选订阅生成;
+	if (!config_JSON.优选订阅生成.本地IP库) config_JSON.优选订阅生成.本地IP库 = 默认配置JSON.优选订阅生成.本地IP库;
+	config_JSON.优选订阅生成.自适应 = 标准化自适应订阅配置(config_JSON.优选订阅生成.自适应);
 	config_JSON.HOST = host;
 	if (!config_JSON.HOSTS) config_JSON.HOSTS = [hostname];
 	if (env.HOST) config_JSON.HOSTS = (await 整理成数组(env.HOST)).map(h => h.toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0]);
@@ -6538,37 +6641,159 @@ function 识别运营商(request) {
 	return 命中运营商 || ASN运营商映射[String(cf?.asn || '')] || 'cf';
 }
 
-async function 生成随机IP(request, count = 16, 指定端口 = -1) {
-	const url = new URL(request.url);
-	const 查询参数运营商 = String(url.searchParams.get('cnIspCode') || '').toLowerCase();
-	const 运营商文件标识 = ['ct', 'cu', 'cmcc', 'cf'].includes(查询参数运营商) ? 查询参数运营商 : 识别运营商(request);
-	const 运营商名称映射 = {
-		cmcc: 'CF移动优选',
-		cu: 'CF联通优选',
-		ct: 'CF电信优选',
-		cf: 'CF官方优选',
-	};
-	const cidr_url = 运营商文件标识 === 'cf' ? `https://raw.githubusercontent.com/${特征码字典[1]}/${特征码字典[1]}/main/CF-CIDR.txt` : `https://raw.githubusercontent.com/${特征码字典[1]}/${特征码字典[1]}/main/CF-CIDR/${运营商文件标识}.txt`;
-	const cfname = 运营商名称映射[运营商文件标识] || 'CF官方优选';
-	const cfport = [443, 2053, 2083, 2087, 2096, 8443];
-	let cidrList = [];
-	try { const res = await fetch(cidr_url); cidrList = res.ok ? await 整理成数组(await res.text()) : ['104.16.0.0/13'] } catch { cidrList = ['104.16.0.0/13'] }
+const 优选运营商代码 = ['ct', 'cu', 'cmcc', 'cf'];
+const 优选运营商名称 = { cmcc: '移动', cu: '联通', ct: '电信', cf: '官方' };
+const 默认优选端口 = [443, 2053, 2083, 2087, 2096, 8443];
+const 优选CIDR缓存 = new Map();
+const 优选CIDR缓存毫秒 = 30 * 60 * 1000;
 
-	const generateRandomIPFromCIDR = (cidr) => {
-		const [baseIP, prefixLength] = cidr.split('/'), prefix = parseInt(prefixLength), hostBits = 32 - prefix;
-		const ipInt = baseIP.split('.').reduce((a, p, i) => a | (parseInt(p) << (24 - i * 8)), 0);
-		const randomOffset = Math.floor(Math.random() * Math.pow(2, hostBits));
-		const mask = (0xFFFFFFFF << hostBits) >>> 0, randomIP = (((ipInt & mask) >>> 0) + randomOffset) >>> 0;
-		return [(randomIP >>> 24) & 0xFF, (randomIP >>> 16) & 0xFF, (randomIP >>> 8) & 0xFF, randomIP & 0xFF].join('.');
+function 标准化自适应订阅配置(value = {}) {
+	const 节点数量 = Math.min(40, Math.max(8, Math.floor(Number(value?.节点数量) || 20)));
+	const 轮换小时 = Math.min(168, Math.max(1, Math.floor(Number(value?.轮换小时) || 24)));
+	const 端口 = Array.isArray(value?.端口)
+		? [...new Set(value.端口.map(Number).filter(port => Number.isInteger(port) && port > 0 && port <= 65535))]
+		: [];
+	return {
+		启用: value?.启用 !== false,
+		节点数量,
+		端口: 端口.length ? 端口 : [...默认优选端口],
+		轮换小时,
 	};
-	const randomIPs = Array.from({ length: count }, (_, index) => {
-		const ip = generateRandomIPFromCIDR(cidrList[Math.floor(Math.random() * cidrList.length)]);
-		const 目标端口 = 指定端口 === -1
-			? cfport[Math.floor(Math.random() * cfport.length)]
-			: 指定端口;
-		return `${ip}:${目标端口}#${cfname}${index + 1}`;
+}
+
+function 构建自适应运营商配额(当前运营商 = 'cf', 节点数量 = 20) {
+	const 运营商 = 优选运营商代码.includes(当前运营商) ? 当前运营商 : 'cf';
+	const 数量 = Math.max(1, Math.floor(Number(节点数量) || 20));
+	let profiles;
+	if (运营商 === 'cf') {
+		profiles = [
+			{ 运营商: 'cf', 权重: 0.4, 角色: '官方通用' },
+			{ 运营商: 'ct', 权重: 0.2, 角色: '跨网备用' },
+			{ 运营商: 'cu', 权重: 0.2, 角色: '跨网备用' },
+			{ 运营商: 'cmcc', 权重: 0.2, 角色: '跨网备用' },
+		];
+	} else {
+		profiles = [
+			{ 运营商, 权重: 0.4, 角色: '本网优先' },
+			{ 运营商: 'cf', 权重: 0.25, 角色: '官方通用' },
+			...优选运营商代码.filter(code => code !== 运营商 && code !== 'cf').map(code => ({ 运营商: code, 权重: 0.175, 角色: '跨网备用' })),
+		];
+	}
+	const 分配 = profiles.map((profile, index) => {
+		const 精确数量 = profile.权重 * 数量;
+		return { ...profile, index, 数量: Math.floor(精确数量), 余数: 精确数量 - Math.floor(精确数量) };
 	});
+	let 待分配 = 数量 - 分配.reduce((sum, item) => sum + item.数量, 0);
+	for (const item of [...分配].sort((a, b) => b.余数 - a.余数 || a.index - b.index)) {
+		if (待分配 <= 0) break;
+		item.数量 += 1;
+		待分配 -= 1;
+	}
+	return 分配.map(({ index, 余数, ...item }) => item).filter(item => item.数量 > 0);
+}
+
+function 优选CIDR地址(运营商) {
+	return 运营商 === 'cf'
+		? `https://raw.githubusercontent.com/${特征码字典[1]}/${特征码字典[1]}/main/CF-CIDR.txt`
+		: `https://raw.githubusercontent.com/${特征码字典[1]}/${特征码字典[1]}/main/CF-CIDR/${运营商}.txt`;
+}
+
+async function 读取优选CIDR(运营商) {
+	const now = Date.now(), cached = 优选CIDR缓存.get(运营商);
+	if (cached && cached.过期时间 > now) return cached.列表;
+	try {
+		const response = await fetch(优选CIDR地址(运营商));
+		if (!response.ok) throw new Error(`HTTP ${response.status}`);
+		const 列表 = (await 整理成数组(await response.text())).filter(item => /^\d{1,3}(?:\.\d{1,3}){3}\/\d{1,2}$/.test(item));
+		if (!列表.length) throw new Error('CIDR 列表为空');
+		优选CIDR缓存.set(运营商, { 列表, 过期时间: now + 优选CIDR缓存毫秒 });
+		return 列表;
+	} catch (error) {
+		if (cached?.列表?.length) return cached.列表;
+		log(`[自适应订阅] ${运营商} CIDR 获取失败，使用内置兜底: ${error?.message || error}`);
+		return ['104.16.0.0/13'];
+	}
+}
+
+function 创建确定性随机(seedText) {
+	let state = 2166136261;
+	for (const char of String(seedText)) {
+		state ^= char.charCodeAt(0);
+		state = Math.imul(state, 16777619) >>> 0;
+	}
+	return () => {
+		state ^= state << 13;
+		state ^= state >>> 17;
+		state ^= state << 5;
+		return (state >>> 0) / 0x100000000;
+	};
+}
+
+function 从CIDR生成随机IPv4(cidr, random = Math.random) {
+	const [baseIP, prefixLength] = String(cidr).split('/');
+	const prefix = Math.min(32, Math.max(0, parseInt(prefixLength, 10) || 0));
+	const hostBits = 32 - prefix;
+	const ipInt = baseIP.split('.').reduce((value, part) => ((value << 8) | (parseInt(part, 10) & 0xff)) >>> 0, 0);
+	const randomOffset = hostBits === 32
+		? Math.floor(random() * 0x100000000) >>> 0
+		: Math.floor(random() * Math.pow(2, hostBits)) >>> 0;
+	const mask = hostBits === 32 ? 0 : (0xffffffff << hostBits) >>> 0;
+	const randomIP = (((ipInt & mask) >>> 0) + randomOffset) >>> 0;
+	return [(randomIP >>> 24) & 0xff, (randomIP >>> 16) & 0xff, (randomIP >>> 8) & 0xff, randomIP & 0xff].join('.');
+}
+
+function 请求指定运营商(request) {
+	const url = new URL(request.url);
+	const value = String(url.searchParams.get('cnIspCode') || '').toLowerCase();
+	return 优选运营商代码.includes(value) ? value : 识别运营商(request);
+}
+
+async function 生成随机IP(request, count = 16, 指定端口 = -1) {
+	const 运营商 = 请求指定运营商(request);
+	const cidrList = await 读取优选CIDR(运营商);
+	const cfname = `CF${优选运营商名称[运营商] || '官方'}优选`;
+	const randomIPs = [], used = new Set();
+	const 目标数量 = Math.max(1, Math.floor(Number(count) || 16));
+	for (let attempt = 0; randomIPs.length < 目标数量 && attempt < 目标数量 * 40; attempt++) {
+		const ip = 从CIDR生成随机IPv4(cidrList[Math.floor(Math.random() * cidrList.length)]);
+		const port = Number(指定端口) === -1 ? 默认优选端口[Math.floor(Math.random() * 默认优选端口.length)] : Number(指定端口);
+		const key = `${ip}:${port}`;
+		if (used.has(key)) continue;
+		used.add(key);
+		randomIPs.push(`${key}#${cfname}${randomIPs.length + 1}`);
+	}
 	return [randomIPs, randomIPs.join('\n')];
+}
+
+async function 生成自适应IP(request, value = {}) {
+	const url = new URL(request.url);
+	const 请求数量 = Number(url.searchParams.get('nodes') || url.searchParams.get('nodeCount'));
+	const config = 标准化自适应订阅配置({ ...value, 节点数量: Number.isFinite(请求数量) && 请求数量 > 0 ? 请求数量 : value?.节点数量 });
+	const 当前运营商 = 请求指定运营商(request);
+	const 配额 = 构建自适应运营商配额(当前运营商, config.节点数量);
+	const 指定端口 = Number(value?.指定端口);
+	const 轮换批次 = Math.floor(Date.now() / (config.轮换小时 * 3600000));
+	const 服务标识 = new URL(request.url).hostname.toLowerCase();
+	const used = new Set();
+	const groups = await Promise.all(配额.map(async (profile, profileIndex) => {
+		const cidrList = await 读取优选CIDR(profile.运营商);
+		const random = 创建确定性随机(`${服务标识}|${当前运营商}|${profile.运营商}|${config.节点数量}|${轮换批次}`);
+		const result = [];
+		for (let attempt = 0; result.length < profile.数量 && attempt < profile.数量 * 60; attempt++) {
+			const ip = 从CIDR生成随机IPv4(cidrList[Math.floor(random() * cidrList.length)], random);
+			const port = Number.isInteger(指定端口) && 指定端口 > 0 && 指定端口 <= 65535
+				? 指定端口
+				: config.端口[(result.length + profileIndex) % config.端口.length];
+			const key = `${ip}:${port}`;
+			if (used.has(key)) continue;
+			used.add(key);
+			const name = `${profile.角色}-${优选运营商名称[profile.运营商]}-${port}-${result.length + 1}`;
+			result.push(`${key}#${name}`);
+		}
+		return result;
+	}));
+	const nodes = groups.flat().slice(0, config.节点数量);
+	return [nodes, nodes.join('\n')];
 }
 
 async function 整理成数组(内容) {

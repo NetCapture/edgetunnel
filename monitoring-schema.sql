@@ -12,8 +12,14 @@ CREATE TABLE IF NOT EXISTS monitor_events (
     bytes_down INTEGER NOT NULL DEFAULT 0,
     duration_ms INTEGER NOT NULL DEFAULT 0,
     country TEXT NOT NULL DEFAULT 'N/A',
-    colo TEXT NOT NULL DEFAULT 'N/A'
+    colo TEXT NOT NULL DEFAULT 'N/A',
+    node_ip TEXT NOT NULL DEFAULT '',
+    node_port INTEGER NOT NULL DEFAULT 0,
+    node_group TEXT NOT NULL DEFAULT ''
 );
+
+CREATE INDEX IF NOT EXISTS idx_monitor_node_ts
+ON monitor_events(node_ip, node_port, ts);
 
 CREATE TABLE IF NOT EXISTS monitor_archive_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
